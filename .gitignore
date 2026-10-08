@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+*.bin
+*.o
+*.a
+*.exe
+vivado*.log
+vivado*.jou
