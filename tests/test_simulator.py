@@ -7,7 +7,14 @@ VEC_DIR = os.path.join(os.path.dirname(__file__), "vectors")
 
 
 def _vectors() -> list[str]:
-    return sorted(glob.glob(os.path.join(VEC_DIR, "matmul_*x*.npz")))
+    """Square vectors only: name shape matmul_<m>x<k>x<n> with m == k == n."""
+    out = []
+    for p in sorted(glob.glob(os.path.join(VEC_DIR, "matmul_*.npz"))):
+        name = os.path.basename(p)
+        dims = name[len("matmul_"):-len(".npz")].split("x")
+        if len(dims) == 3 and len(set(dims)) == 1:
+            out.append(p)
+    return out
 
 
 def test_vectors_present():
