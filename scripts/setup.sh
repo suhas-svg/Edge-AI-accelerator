@@ -3,6 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Same two environment facts check.sh repairs, so setup and check agree. Running
+# setup without these can build a perfectly good .venv that still cannot import.
+export PATH="/c/MinGW/bin:$PATH"
+unset PYTHONPATH
+
 if ! command -v uv >/dev/null 2>&1; then
   echo "missing: uv (https://docs.astral.sh/uv/)" >&2
   exit 1

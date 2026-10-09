@@ -2,6 +2,17 @@
 # One green check for the software slice. Fails loud, no partial pass.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# --- environment repair (verified, see scripts/doctor.sh for the probe) ---
+# PATH: this host has an unrelated /mingw64/bin ahead of /c/MinGW/bin carrying a
+# DIFFERENT build of libgmp-10.dll. The Windows loader rejects the ABI mismatch
+# and kills cc1.exe with exit 127 and ZERO diagnostics, so gcc looks like it
+# silently does nothing. Putting the real MinGW bin first fixes it.
+export PATH="/c/MinGW/bin:$PATH"
+# PYTHONPATH: the Hermes agent's own venv is exported here and shadows the
+# project's healthy numpy, so imports die with "DLL load failed: Access denied".
+unset PYTHONPATH
+
 .venv/Scripts/python.exe tools/gen_vectors.py
 .venv/Scripts/python.exe -m pytest tests/ -q
 mkdir -p build
