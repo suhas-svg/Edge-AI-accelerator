@@ -1,7 +1,6 @@
 """Harness contract. Each test fails for a real defect in the verifier."""
 import os
 import numpy as np
-import pytest
 from tools.verify_rtl import compare_vector, main
 
 
@@ -44,6 +43,13 @@ def test_shape_mismatch_reported(tmp_path):
     assert "(2, 2)" in msgs[0] and "(1, 4)" in msgs[0]
 
 
+def test_dtype_mismatch_reported(tmp_path):
+    exp = np.full((2, 2), 8, dtype=np.int32)
+    msgs = compare_vector(_mk(tmp_path, exp, np.full((2, 2), 8, dtype=np.int64)))
+    assert len(msgs) == 1
+    assert "dtype" in msgs[0] and "int32" in msgs[0] and "int64" in msgs[0]
+
+
 def test_main_exits_nonzero_on_mismatch(tmp_path):
     exp = np.full((2, 2), 8, dtype=np.int32)
     rtl = exp.copy()
@@ -58,22 +64,13 @@ def test_main_exits_zero_when_all_match(tmp_path):
     assert main(str(tmp_path)) == 0
 
 
-def test_self_check_catches_deliberate_corruption(tmp_path):
+def test_self_check_catches_deliberate_corruption():
     """The harness must fail on a corrupted copy of a real golden vector."""
     import subprocess, sys
+    from tools.selfcheck import build_corrupted
     repo = os.path.join(os.path.dirname(__file__), "..")
-    vdir = os.path.join(repo, "tests", "vectors")
-    tmp = str(tmp_path)
-    for f in os.listdir(vdir):
-        if f.endswith(".npz"):
-            d = dict(np.load(os.path.join(vdir, f)))
-            d["rtl_out"] = d["expected"].copy()
-            np.savez(os.path.join(tmp, f), **d)
-    target = os.path.join(tmp, "matmul_8x8x8.npz")
-    d = dict(np.load(target))
-    d["rtl_out"] = d["rtl_out"].copy()
-    d["rtl_out"][0, 0] = d["rtl_out"][0, 0] + 1
-    np.savez(target, **d)
+    tmp = os.path.join(repo, "build", "selfcheck-test")
+    build_corrupted(tmp)
     r = subprocess.run([sys.executable, os.path.join(repo, "tools", "verify_rtl.py"), tmp],
                        capture_output=True, text=True)
     assert r.returncode == 1

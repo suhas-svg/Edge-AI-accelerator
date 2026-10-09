@@ -18,7 +18,8 @@ def _vectors() -> list[str]:
 
 
 def test_vectors_present():
-    assert len(_vectors()) == 4, "run tools/gen_vectors.py first"
+    from tools import gen_vectors
+    assert len(_vectors()) == len([s for s in gen_vectors.SIZES if s[0] == s[1] == s[2]])
 
 
 def test_sim_matches_reference_on_all_vectors():

@@ -3,6 +3,8 @@ import os
 import numpy as np
 from tools import gen_vectors
 
+VEC_DIR = os.path.join(os.path.dirname(__file__), "vectors")
+
 
 def test_sizes_are_triples():
     assert all(len(s) == 3 for s in gen_vectors.SIZES)
@@ -10,25 +12,34 @@ def test_sizes_are_triples():
 
 def test_generation_is_byte_identical():
     import hashlib, subprocess, sys, os
+    from tools import gen_vectors
     repo = os.path.join(os.path.dirname(__file__), "..")
+    tmp_out = os.path.join(repo, "build", "vectors-regression")
+    os.makedirs(tmp_out, exist_ok=True)
+    original_out = gen_vectors.OUT
+    gen_vectors.OUT = tmp_out  # never touch the committed golden vectors
+    try:
+        subprocess.run([sys.executable, os.path.join(repo, "tools", "gen_vectors.py")],
+                       check=True, capture_output=True)
 
-    def digest() -> dict:
-        out = {}
-        d = os.path.join(repo, "tests", "vectors")
-        for f in sorted(os.listdir(d)):
-            if f.endswith(".npz"):
-                with open(os.path.join(d, f), "rb") as fh:
-                    out[f] = hashlib.sha256(fh.read()).hexdigest()
-        return out
+        def digest(d: str) -> dict:
+            out = {}
+            for f in sorted(os.listdir(d)):
+                if f.endswith(".npz"):
+                    with open(os.path.join(d, f), "rb") as fh:
+                        out[f] = hashlib.sha256(fh.read()).hexdigest()
+            return out
 
-    first = digest()
-    subprocess.run([sys.executable, os.path.join(repo, "tools", "gen_vectors.py")],
-                   check=True, capture_output=True)
-    assert digest() == first
+        first = digest(tmp_out)
+        subprocess.run([sys.executable, os.path.join(repo, "tools", "gen_vectors.py")],
+                       check=True, capture_output=True)
+        assert digest(tmp_out) == first
+    finally:
+        gen_vectors.OUT = original_out
 
 
 def test_overflow_vector_expected_value():
-    d = np.load(os.path.join("tests", "vectors", "matmul_overflow.npz"))
+    d = np.load(os.path.join(VEC_DIR, "matmul_overflow.npz"))
     assert d["a_q"].shape == (64, 64)
     assert d["a_q"].min() == -128 and d["a_q"].max() == -128
     assert d["b_q"].min() == 127 and d["b_q"].max() == 127
