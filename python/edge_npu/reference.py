@@ -2,6 +2,8 @@
 from __future__ import annotations
 import numpy as np
 
+INT32_MIN, INT32_MAX = -(2 ** 31), 2 ** 31 - 1
+
 
 def matmul_fp32(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return a.astype(np.float32) @ b.astype(np.float32)
@@ -17,8 +19,15 @@ def dequantize_int8(q: np.ndarray, scale: float, zero_point: int = 0) -> np.ndar
 
 
 def matmul_int8(a_q: np.ndarray, b_q: np.ndarray) -> np.ndarray:
-    """INT8 in, INT32 accum out. Matches the 8x8 MAC array contract (spec section 5)."""
-    return (a_q.astype(np.int32) @ b_q.astype(np.int32)).astype(np.int32)
+    """INT8 in, INT32 accum out. Matches the 8x8 MAC array contract (spec section 5).
+
+    Accumulates in int64 so an out-of-range result is detected and rejected
+    rather than silently wrapped by the int32 cast.
+    """
+    wide = a_q.astype(np.int64) @ b_q.astype(np.int64)
+    if wide.min() < INT32_MIN or wide.max() > INT32_MAX:
+        raise ValueError(f"matmul result exceeds INT32 range: [{wide.min()}, {wide.max()}]")
+    return wide.astype(np.int32)
 
 
 def quantization_error(fp32_out: np.ndarray, deq_out: np.ndarray) -> float:

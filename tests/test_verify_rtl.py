@@ -43,11 +43,14 @@ def test_shape_mismatch_reported(tmp_path):
     assert "(2, 2)" in msgs[0] and "(1, 4)" in msgs[0]
 
 
-def test_dtype_mismatch_reported(tmp_path):
+def test_dtype_and_value_defects_reported_together(tmp_path):
     exp = np.full((2, 2), 8, dtype=np.int32)
-    msgs = compare_vector(_mk(tmp_path, exp, np.full((2, 2), 8, dtype=np.int64)))
-    assert len(msgs) == 1
-    assert "dtype" in msgs[0] and "int32" in msgs[0] and "int64" in msgs[0]
+    rtl = np.full((2, 2), 8, dtype=np.int64)
+    rtl[0, 0] = 9
+    msgs = compare_vector(_mk(tmp_path, exp, rtl))
+    assert len(msgs) == 2
+    assert any("dtype" in m for m in msgs)
+    assert any("mismatch at (0, 0)" in m for m in msgs)
 
 
 def test_main_exits_nonzero_on_mismatch(tmp_path):

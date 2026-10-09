@@ -8,12 +8,10 @@ from python.edge_npu.reference import quantize_int8, matmul_int8
 SIZES = [(8, 8, 8), (8, 8, 16), (16, 8, 8), (64, 64, 64), (128, 128, 128), (256, 256, 256)]
 SCALE = 0.05
 OUT = os.path.join(os.path.dirname(__file__), "..", "tests", "vectors")
-INT32_MIN, INT32_MAX = -(2 ** 31), 2 ** 31 - 1
 
 
 def _write(path: str, a_q: np.ndarray, b_q: np.ndarray, expected: np.ndarray) -> None:
-    if expected.min() < INT32_MIN or expected.max() > INT32_MAX:
-        raise ValueError(f"{path}: expected exceeds INT32 range")
+    # matmul_int8 raises on an out-of-range result, so no range check here.
     np.savez(path, a_q=a_q, b_q=b_q, expected=expected)
     print(f"wrote {path}")
 

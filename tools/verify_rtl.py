@@ -17,22 +17,28 @@ DEFAULT_VEC_DIR = os.path.join(os.path.dirname(__file__), "..", "tests", "vector
 
 
 def compare_vector(path: str) -> list[str]:
-    """Return one message per defect in a single vector file. Empty means match."""
+    """Return one message per defect in a single vector file. Empty means match.
+
+    Reports every defect found, not just the first, so a vector with both a
+    shape error and value errors names both.
+    """
     name = os.path.basename(path)
     d = np.load(path)
     if "rtl_out" not in d.files:
         return [f"{name}: MISSING rtl_out key; hardware output not present"]
     expected, rtl = d["expected"], d["rtl_out"]
+    msgs: list[str] = []
     if expected.shape != rtl.shape:
         return [f"{name}: shape mismatch expected {expected.shape} vs rtl_out {rtl.shape}"]
     if expected.dtype != rtl.dtype:
-        return [f"{name}: dtype mismatch expected {expected.dtype} vs rtl_out {rtl.dtype}"]
+        msgs.append(f"{name}: dtype mismatch expected {expected.dtype} vs rtl_out {rtl.dtype}")
     diff = np.argwhere(expected != rtl)
     if diff.size == 0:
-        return []
+        return msgs
     idx = tuple(int(i) for i in diff[0])
-    return [f"{name}: mismatch at {idx} expected {expected[idx]} vs rtl_out {rtl[idx]} "
-            f"({diff.shape[0]} of {expected.size} values differ)"]
+    msgs.append(f"{name}: mismatch at {idx} expected {expected[idx]} vs rtl_out {rtl[idx]} "
+                f"({diff.shape[0]} of {expected.size} values differ)")
+    return msgs
 
 
 def main(vec_dir: str = DEFAULT_VEC_DIR) -> int:

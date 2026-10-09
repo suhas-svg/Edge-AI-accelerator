@@ -1,5 +1,6 @@
 """Behavior tests. Each fails for a real numerics defect."""
 import numpy as np
+import pytest
 from python.edge_npu.reference import (matmul_fp32, quantize_int8, dequantize_int8,
                                        matmul_int8, quantization_error)
 
@@ -33,6 +34,19 @@ def test_quantization_error_is_bounded_by_half_a_step():
     q = quantize_int8(x, scale=scale)
     deq = dequantize_int8(q, scale=scale)
     assert quantization_error(x, deq) <= scale / 2 + 1e-6
+
+
+def test_int32_overflow_is_rejected_not_wrapped():
+    """A result outside INT32 range must raise, not silently wrap.
+
+    K = 200000 makes the true dot product -3,251,200,000, which int32
+    cannot hold. Without the guard numpy wraps it to +1,043,767,296.
+    """
+    k = 200000
+    a = np.full((1, k), -128, dtype=np.int8)
+    b = np.full((k, 1), 127, dtype=np.int8)
+    with pytest.raises(ValueError, match="INT32"):
+        matmul_int8(a, b)
 
 
 def test_quantization_error_is_zero_when_exact():
