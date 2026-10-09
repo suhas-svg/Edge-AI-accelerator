@@ -22,6 +22,11 @@ def matmul_int8(a_q: np.ndarray, b_q: np.ndarray) -> np.ndarray:
 
 
 def quantization_error(fp32_out: np.ndarray, deq_out: np.ndarray) -> float:
+    """Max absolute error between an FP32 result and its dequantized INT8 twin.
+
+    Spec section 18 requires the compiler to compare FP32 against INT8 and
+    calculate quantization error. This is that calculation.
+    """
     return float(np.max(np.abs(fp32_out - deq_out)))
 
 
@@ -60,5 +65,9 @@ def max_pool(x: np.ndarray, size: int, stride: int) -> np.ndarray:
 
 
 def requantize(acc: np.ndarray, scale: float, zero_point: int = 0) -> np.ndarray:
+    """Map INT32 accumulator to INT8. ``scale`` is output-per-accumulator,
+    so this multiplies. ``quantize_int8`` takes the opposite convention
+    (FP32 value per INT8 step, so it divides); see docs/tensor-format.md.
+    """
     q = np.round(acc.astype(np.float32) * scale).astype(np.int32) + zero_point
     return np.clip(q, -128, 127).astype(np.int8)
