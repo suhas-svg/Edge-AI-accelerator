@@ -33,6 +33,42 @@ int main(void) {
     assert(enpu_load_model(&dev, "build/t_badver.bin", &m) != 0);
     assert(enpu_load_model(&dev, "build/does-not-exist.bin", &m) != 0);
 
+    assert(ENPU_OK == 0);
+    assert(enpu_load_model(&dev, "build/t_badmagic.bin", &m) == ENPU_ERR_VERSION);
+    assert(enpu_load_model(&dev, "build/does-not-exist.bin", &m) == ENPU_ERR_IO);
+    assert(enpu_open(0) == ENPU_ERR_ARG);
+
+    enpu_buffer_t ba = {0}, bb = {0}, bc = {0};
+    assert(enpu_alloc_buffer(&dev, 64, &ba) == ENPU_OK && ba.size == 64 && ba.data);
+    assert(enpu_alloc_buffer(&dev, 0, &bb) == ENPU_ERR_ARG);
+    assert(enpu_alloc_buffer(0, 64, &bb) == ENPU_ERR_ARG);
+    enpu_device_t dead = {0};
+    assert(enpu_alloc_buffer(&dead, 64, &bb) == ENPU_ERR_ARG);
+    assert(enpu_alloc_buffer(&dev, 64, &bb) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 256, &bc) == ENPU_OK);
+    for (int i = 0; i < 64; i++) {
+        ((int8_t *)ba.data)[i] = (int8_t)(i % 5 - 2);
+        ((int8_t *)bb.data)[i] = (int8_t)(i % 3 - 1);
+    }
+    uint32_t rc = 0;
+    assert(enpu_run_matmul(&dev, &ba, &bb, &bc, 8, 8, 8, &rc) == ENPU_OK && rc == 8);
+    {
+        int32_t expect = 0;
+        for (int p = 0; p < 8; p++)
+            expect += (int32_t)((int8_t *)ba.data)[p] * ((int8_t *)bb.data)[p * 8];
+        assert(((int32_t *)bc.data)[0] == expect);
+    }
+    assert(enpu_run_matmul(&dev, &ba, &bb, &bc, 7, 8, 8, &rc) == ENPU_ERR_ARG);
+    assert(enpu_run_matmul(&dev, &ba, &bb, &bc, 16, 8, 8, &rc) == ENPU_ERR_ARG);
+    assert(enpu_run_matmul(0, &ba, &bb, &bc, 8, 8, 8, &rc) == ENPU_ERR_ARG);
+    assert(enpu_run_matmul(&dev, 0, &bb, &bc, 8, 8, 8, &rc) == ENPU_ERR_ARG);
+    enpu_free_buffer(&ba);
+    enpu_free_buffer(&bb);
+    enpu_free_buffer(&bc);
+    assert(ba.data == 0 && ba.size == 0);
+    enpu_free_buffer(&ba);
+    enpu_free_buffer(0);
+
     printf("runtime tests ok\n");
     return 0;
 }
