@@ -181,8 +181,6 @@ def test_lower_graph_chain_exact_stream():
         Command(op="LOAD", address=0x1040, size=64),
         Command(op="MATMUL", m=8, n=8, k=8),
         Command(op="STORE", address=0x1080, size=256),
-        Command(op="RELU", address=0x1080, size=256),
-        Command(op="BIAS_ADD", address=0x1080, size=256),
         Command(op="REQUANTIZE", address=0x1000, size=64, reserved=scale_bits, m=128),
         Command(op="STORE", address=0x1000, size=64),
     ]

@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from compiler.binary import ModelPack, read_model
+from compiler.middleend import fusable
 from python.edge_npu.reference import bias_add, max_pool, relu, requantize
 from simulator.hardware_model import MACS_PER_CYCLE, run_conv2d, run_matmul
 
@@ -35,8 +36,11 @@ def _logical_sink_shape(nodes, cmds, x_shape: tuple[int, ...],
         k, _kc, kh, kw = w_shape
         shape = (k, h - kh + 1, wd - kw + 1)
     ew = [c_ for c_ in cmds if c_.op in ("RELU", "BIAS_ADD", "MAX_POOL", "REQUANTIZE")]
+    fused = fusable(list(nodes))
     ei = 0
     for node in nodes[1:]:
+        if node.output in fused and (ei >= len(ew) or ew[ei].op != node.op.upper()):
+            continue
         if node.op == "max_pool":
             cmd = ew[ei]
             ch, hh, ww = shape
@@ -130,19 +134,25 @@ class Model:
         # Elementwise/pool cycles are not modeled yet; the MAC count stands.
         ew = [c_ for c_ in self.pack.cmds
               if c_.op in ("RELU", "BIAS_ADD", "MAX_POOL", "REQUANTIZE")]
+        fused = fusable(list(nodes))
         ei = 0
         for node in nodes[1:]:
             if node.inputs[0] != prev:
                 raise ValueError(
                     f"node {node.op} reads {node.inputs[0]!r}, chain holds {prev!r}"
                 )
-            if ei >= len(ew) or ew[ei].op != node.op.upper():
-                raise ValueError(f"command stream missing {node.op} for chain step")
-            if node.op != "max_pool" and node.op != "requantize" and ew[ei].size != buf.nbytes:
-                raise ValueError(
-                    f"command stream {ew[ei].op} size does not match buffer bytes"
-                )
-            ei += 1
+            if node.output in fused and (ei >= len(ew) or ew[ei].op != node.op.upper()):
+                cmd = None
+            else:
+                if ei >= len(ew) or ew[ei].op != node.op.upper():
+                    raise ValueError(f"command stream missing {node.op} for chain step")
+                if node.op != "max_pool" and node.op != "requantize" \
+                        and ew[ei].size != buf.nbytes:
+                    raise ValueError(
+                        f"command stream {ew[ei].op} size does not match buffer bytes"
+                    )
+                ei += 1
+                cmd = ew[ei - 1]
             if node.op == "relu":
                 buf = relu(buf)
             elif node.op == "bias_add":
@@ -155,12 +165,13 @@ class Model:
                     b = _pad_to(buf.shape, b)
                 buf = bias_add(buf, b)
             elif node.op == "max_pool":
-                buf = max_pool(buf, ew[ei - 1].m, ew[ei - 1].n)
+                buf = max_pool(buf, cmd.m, cmd.n)
             else:
-                (scale,) = struct.unpack("<f", struct.pack("<I", ew[ei - 1].reserved))
-                buf = requantize(buf, scale, ew[ei - 1].m - 128)
-            if ew[ei - 1].size != buf.nbytes and node.op in ("max_pool", "requantize"):
-                raise ValueError(f"command stream {ew[ei-1].op} size does not match output bytes")
+                (scale,) = struct.unpack("<f", struct.pack("<I", cmd.reserved))
+                buf = requantize(buf, scale, cmd.m - 128)
+            if cmd is not None and cmd.size != buf.nbytes \
+                    and node.op in ("max_pool", "requantize"):
+                raise ValueError(f"command stream {cmd.op} size does not match output bytes")
             prev = node.output
         if ei != len(ew):
             raise ValueError("command stream has extra elementwise commands")

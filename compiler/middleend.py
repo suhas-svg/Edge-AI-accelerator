@@ -135,10 +135,14 @@ def lower_graph(graph: Graph, specs: dict[str, TensorSpec],
     specs = legalize(order, specs, attrs)
     validate(order)
     aliases = {n.output: n.inputs[0] for n in order if n.op in ("relu", "bias_add")}
-    plan = plan_memory(order, specs, aliases, config)
+    plan = plan_memory(order, specs, aliases, config,
+                       weights=frozenset(opt_weights))
     addr = {name: slot.address for name, slot in plan.slots.items()}
+    fused = fusable(order)
     cmds: list[Command] = []
     for node in order:
+        if node.output in fused:
+            continue
         out_addr = addr[node.output]
         if node.op == "matmul":
             cmds += emit_matmul(node, specs, addr[node.inputs[0]],
@@ -305,3 +309,26 @@ def legalize(order: list[Node], specs: dict[str, TensorSpec],
         else:  # pragma: no cover — validate rejects these in lower_graph
             raise ValueError(f"no lowering for op {node.op!r}")
     return out
+
+
+def fusable(order: list[Node]) -> set[str]:
+    """Outputs of relu/bias_add nodes absorbed into a matmul/conv2d producer.
+
+    A node is fused when walking back through relu/bias_add producers
+    reaches a matmul or conv2d. Fused nodes emit no command; the executor
+    applies them from the graph.
+    """
+    by_output = {n.output: n for n in order}
+    fused: set[str] = set()
+    for node in order:
+        if node.op not in ("relu", "bias_add"):
+            continue
+        cur = node
+        while cur.op in ("relu", "bias_add") and cur.inputs:
+            prev = by_output.get(cur.inputs[0])
+            if prev is None:
+                break
+            cur = prev
+        if cur.op in ("matmul", "conv2d"):
+            fused.add(node.output)
+    return fused

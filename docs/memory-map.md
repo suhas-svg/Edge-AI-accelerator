@@ -40,11 +40,20 @@ spans round up to the alignment (default 64) while `Slot.size` keeps the
 logical bytes. Exceeding the budget raises
 `ValueError("memory plan needs {peak} bytes, budget {size}")`.
 
+With `banks=2`, named weights allocate top-down from the region end while
+everything else allocates bottom-up with first-fit inside its bank, so
+stationary weights sit apart from streaming activations. `banks=1`
+(the default) ignores weight names and reproduces the single-region
+layout exactly.
+
 The SDK executor keys buffers by stream order, not by address decoding:
 LOAD sizes must equal input then weight bytes in order; each compute
 command's shape fields and byte size must match the live buffer; the final
 STORE must match the output bytes. Intermediate STOREs are permitted; only
-the last one is checked against the result.
+the last one is checked against the result. Fused relu/bias_add nodes emit
+no command; the executor applies them from the graph without consuming a
+stream step, while a fused node that still carries a command consumes it
+as before.
 
 ## Alignment discipline
 
