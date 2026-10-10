@@ -11,6 +11,40 @@ from python.edge_npu.reference import bias_add, max_pool, relu, requantize
 from simulator.hardware_model import MACS_PER_CYCLE, run_conv2d, run_matmul
 
 
+def _pad_to(shape: tuple[int, ...], arr: np.ndarray) -> np.ndarray:
+    """Zero-pad an array out to the padded tile geometry, per dimension."""
+    shape = tuple(shape)
+    if len(shape) != arr.ndim or any(s < l for s, l in zip(shape, arr.shape)):
+        raise ValueError(
+            f"tensor shape {arr.shape} does not fit tile geometry {shape}")
+    if tuple(arr.shape) == shape:
+        return np.ascontiguousarray(arr)
+    out = np.zeros(shape, dtype=arr.dtype)
+    out[tuple(slice(0, d) for d in arr.shape)] = arr
+    return out
+
+
+def _logical_sink_shape(nodes, cmds, x_shape: tuple[int, ...],
+                        w_shape: tuple[int, ...]) -> tuple[int, ...]:
+    """Propagate logical (unpadded) shapes through the chain to the sink."""
+    first = nodes[0]
+    if first.op == "matmul":
+        shape = (x_shape[0], w_shape[1])
+    else:
+        c, h, wd = x_shape
+        k, _kc, kh, kw = w_shape
+        shape = (k, h - kh + 1, wd - kw + 1)
+    ew = [c_ for c_ in cmds if c_.op in ("RELU", "BIAS_ADD", "MAX_POOL", "REQUANTIZE")]
+    ei = 0
+    for node in nodes[1:]:
+        if node.op == "max_pool":
+            cmd = ew[ei]
+            ch, hh, ww = shape
+            shape = (ch, (hh - cmd.m) // cmd.n + 1, (ww - cmd.m) // cmd.n + 1)
+        ei += 1
+    return shape
+
+
 class Model:
     def __init__(self, path: str):
         self.path = path
@@ -52,28 +86,41 @@ class Model:
             if k != kb:
                 raise ValueError(f"input inner dim {k} vs weights {kb}")
             matmuls = [c for c in self.pack.cmds if c.op == "MATMUL"]
-            if len(matmuls) != 1 or (matmuls[0].m, matmuls[0].n, matmuls[0].k) != (m, n, k):
+            if len(matmuls) != 1:
                 raise ValueError("command stream MATMUL does not match graph shapes")
+            mm = matmuls[0]
             loads = [c for c in self.pack.cmds if c.op == "LOAD"]
+            x_shape, w_shape = a.shape, w.shape
+            a = _pad_to((mm.m, mm.k), a)
+            w = _pad_to((mm.k, mm.n), w)
             if [c.size for c in loads] != [a.nbytes, w.nbytes]:
                 raise ValueError("command stream LOAD sizes do not match tensor bytes")
+            if (mm.m, mm.n, mm.k) != (a.shape[0], w.shape[1], a.shape[1]):
+                raise ValueError("command stream MATMUL does not match graph shapes")
             buf, cycles = run_matmul(a, w)
-            macs = m * n * k
+            macs = mm.m * mm.n * mm.k
         else:
             a = np.ascontiguousarray(x, dtype=np.int8)
             c, h, wd = a.shape
             k, kc, kh, kw = w.shape
             if kc != c:
                 raise ValueError(f"input channels {c} vs weights {kc}")
-            oh, ow = h - kh + 1, wd - kw + 1
             convs = [c_ for c_ in self.pack.cmds if c_.op == "CONV2D"]
-            if len(convs) != 1 or (convs[0].m, convs[0].n, convs[0].k) != (k, oh, ow):
+            if len(convs) != 1:
                 raise ValueError("command stream CONV2D does not match graph shapes")
+            cv = convs[0]
             loads = [c_ for c_ in self.pack.cmds if c_.op == "LOAD"]
+            x_shape, w_shape = a.shape, w.shape
+            kk, ohp, owp = cv.m, cv.n, cv.k
+            cp = loads[1].size // (kk * kh * kw)
+            a = _pad_to((cp, ohp + kh - 1, owp + kw - 1), a)
+            w = _pad_to((kk, cp, kh, kw), w)
             if [c_.size for c_ in loads] != [a.nbytes, w.nbytes]:
                 raise ValueError("command stream LOAD sizes do not match tensor bytes")
+            if kk < k or cp < kc:
+                raise ValueError("command stream CONV2D does not match graph shapes")
             buf, cycles = run_conv2d(a, w)
-            macs = k * oh * ow * c * kh * kw
+            macs = kk * ohp * owp * cp * kh * kw
         prev = first.output
         # Elementwise/pool cycles are not modeled yet; the MAC count stands.
         ew = [c_ for c_ in self.pack.cmds
@@ -96,7 +143,12 @@ class Model:
             elif node.op == "bias_add":
                 if node.inputs[1] not in self.pack.weights:
                     raise ValueError(f"model missing weights for {node.inputs[1]!r}")
-                buf = bias_add(buf, self.pack.weights[node.inputs[1]])
+                b = self.pack.weights[node.inputs[1]]
+                if b.ndim == 1:
+                    b = _pad_to((buf.shape[-1],), b)
+                else:
+                    b = _pad_to(buf.shape, b)
+                buf = bias_add(buf, b)
             elif node.op == "max_pool":
                 buf = max_pool(buf, ew[ei - 1].m, ew[ei - 1].n)
             else:
@@ -110,6 +162,8 @@ class Model:
         stores = [c_ for c_ in self.pack.cmds if c_.op == "STORE"]
         if not stores or stores[-1].size != buf.nbytes:
             raise ValueError("command stream final STORE size does not match output bytes")
+        logical = _logical_sink_shape(nodes, self.pack.cmds, x_shape, w_shape)
+        buf = buf[tuple(slice(0, d) for d in logical)]
         self._cycles = cycles
         self._macs = macs
         return buf
