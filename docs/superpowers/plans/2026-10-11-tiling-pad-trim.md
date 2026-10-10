@@ -188,28 +188,28 @@ from python.edge_npu.commands import Command
 
 def test_lower_graph_odd_matmul_stream_is_tiled():
     node = Node(op="matmul", inputs=("a", "w"), output="c")
-    specs = _mm_specs((24, 16), (16, 32), (24, 32))
+    specs = _mm_specs((20, 12), (12, 28), (20, 28))
     lg = lower_graph(Graph(nodes=(node,)), specs,
-                     {"w": np.ones((16, 32), dtype=np.int8)}, {})
+                     {"w": np.ones((12, 28), dtype=np.int8)}, {})
     assert lg.cmds == [
-        Command(op="LOAD", address=0x1000, size=512),
-        Command(op="LOAD", address=0x1200, size=512),
-        Command(op="MATMUL", m=32, n=32, k=16),
-        Command(op="STORE", address=0x1400, size=4096),
+        Command(op="LOAD", address=0x1000, size=384),
+        Command(op="LOAD", address=0x1180, size=512),
+        Command(op="MATMUL", m=24, n=32, k=16),
+        Command(op="STORE", address=0x1380, size=3072),
     ]
-    assert lg.weights["w"].shape == (16, 32)  # stored logical
+    assert lg.weights["w"].shape == (12, 28)  # stored logical
 
 
 def test_lower_graph_padded_budget_boundary():
     from compiler.memory import MemoryConfig
     node = Node(op="matmul", inputs=("a", "w"), output="c")
-    specs = _mm_specs((24, 16), (16, 32), (24, 32))
-    weights = {"w": np.ones((16, 32), dtype=np.int8)}
+    specs = _mm_specs((20, 12), (12, 28), (20, 28))
+    weights = {"w": np.ones((12, 28), dtype=np.int8)}
     lower_graph(Graph(nodes=(node,)), specs, weights, {},
-                memory=MemoryConfig(size=5120))  # padded peak exactly
-    with pytest.raises(ValueError, match="5120"):
+                memory=MemoryConfig(size=3968))  # padded peak exactly
+    with pytest.raises(ValueError, match="3968"):
         lower_graph(Graph(nodes=(node,)), specs, weights, {},
-                    memory=MemoryConfig(size=5119))
+                    memory=MemoryConfig(size=3967))
 
 
 def test_lower_graph_odd_dims_still_rejected_below_legalize():
@@ -219,7 +219,7 @@ def test_lower_graph_odd_dims_still_rejected_below_legalize():
         lower_matmul(node, _mm_specs((60, 64), (64, 64), (60, 64)), base=0x1000)
 ```
 
-LOAD sizes are padded bytes: `a` pads (24,16)→(32,16) = 512 bytes @0x1000 (span 512); `w` (16,32) = 512 @0x1200; `c` (32,32) INT32 = 4096 @0x1400. Padded peak = 0x1400 + 4096 − 0x1000 = 5120.
+LOAD sizes are padded bytes: `a` pads (20,12)→(24,16) = 384 bytes @0x1000 (span 384); `w` pads (12,28)→(16,32) = 512 @0x1180; `c` (24,32) INT32 = 3072 @0x1380. Padded peak = 0x1380 + 3072 − 0x1000 = 3968.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -265,15 +265,15 @@ from python.edge_npu.sdk import Device
 
 def test_odd_matmul_end_to_end_matches_reference(tmp_path):
     node = Node(op="matmul", inputs=("a", "w"), output="c")
-    specs = _mm_specs((24, 16), (16, 32), (24, 32))
+    specs = _mm_specs((20, 12), (12, 28), (20, 28))
     rng = np.random.default_rng(21)
-    w = rng.integers(-128, 127, size=(16, 32), dtype=np.int8)
+    w = rng.integers(-128, 127, size=(12, 28), dtype=np.int8)
     lg = lower_graph(Graph(nodes=(node,)), specs, {"w": w}, {})
     path = str(tmp_path / "odd.bin")
     write_model(path, lg.graph, lg.weights, lg.cmds)
-    x = rng.integers(-128, 127, size=(24, 16), dtype=np.int8)
+    x = rng.integers(-128, 127, size=(20, 12), dtype=np.int8)
     out = Device().load_model(path).predict(x)
-    assert out.shape == (24, 32)
+    assert out.shape == (20, 28)
     np.testing.assert_array_equal(out, matmul_int8(x, w))
 
 

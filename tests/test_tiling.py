@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from compiler.graph import Graph, Node
-from compiler.middleend import legalize, schedule
+from compiler.middleend import legalize, lower_graph, schedule
+from python.edge_npu.commands import Command
 from python.edge_npu.tensor import TensorSpec
 
 
@@ -88,3 +89,36 @@ def test_legalize_pool_needs_attrs():
              "p": TensorSpec(name="p", dtype="int8", shape=(8, 4, 4))}
     with pytest.raises(ValueError, match="'p'"):
         legalize(_order(nodes, specs), specs, {})
+
+
+def test_lower_graph_odd_matmul_stream_is_tiled():
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = _mm_specs((20, 12), (12, 28), (20, 28))
+    lg = lower_graph(Graph(nodes=(node,)), specs,
+                     {"w": np.ones((12, 28), dtype=np.int8)}, {})
+    assert lg.cmds == [
+        Command(op="LOAD", address=0x1000, size=384),
+        Command(op="LOAD", address=0x1180, size=512),
+        Command(op="MATMUL", m=24, n=32, k=16),
+        Command(op="STORE", address=0x1380, size=3072),
+    ]
+    assert lg.weights["w"].shape == (12, 28)  # stored logical
+
+
+def test_lower_graph_padded_budget_boundary():
+    from compiler.memory import MemoryConfig
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = _mm_specs((20, 12), (12, 28), (20, 28))
+    weights = {"w": np.ones((12, 28), dtype=np.int8)}
+    lower_graph(Graph(nodes=(node,)), specs, weights, {},
+                memory=MemoryConfig(size=3968))  # padded peak exactly
+    with pytest.raises(ValueError, match="3968"):
+        lower_graph(Graph(nodes=(node,)), specs, weights, {},
+                    memory=MemoryConfig(size=3967))
+
+
+def test_lower_graph_odd_dims_still_rejected_below_legalize():
+    from compiler.codegen import lower_matmul
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    with pytest.raises(ValueError, match="not divisible"):
+        lower_matmul(node, _mm_specs((60, 64), (64, 64), (60, 64)), base=0x1000)

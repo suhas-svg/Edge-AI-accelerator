@@ -132,6 +132,7 @@ def lower_graph(graph: Graph, specs: dict[str, TensorSpec],
     config = memory if memory is not None else MemoryConfig()
     opt_graph, opt_weights = optimize(graph, weights)
     order = schedule(opt_graph, specs)
+    specs = legalize(order, specs, attrs)
     validate(order)
     aliases = {n.output: n.inputs[0] for n in order if n.op in ("relu", "bias_add")}
     plan = plan_memory(order, specs, aliases, config)
@@ -217,7 +218,7 @@ def legalize(order: list[Node], specs: dict[str, TensorSpec],
             if c_s.shape != (m, n):
                 raise ValueError(f"output shape {c_s.shape} != matmul result ({m}, {n})")
             pa, pw = pad_in(node.inputs[0]), pad_in(node.inputs[1])
-            kp = max(pa[1], pw[1])
+            kp = max(pa[1], pw[0])
             pa, pw = (pa[0], kp), (kp, pw[1])
             put(node.inputs[0], pa)
             put(node.inputs[1], pw)
