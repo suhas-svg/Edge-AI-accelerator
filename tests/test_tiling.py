@@ -175,3 +175,56 @@ def test_odd_conv_pool_matches_reference(tmp_path):
     out = Device().load_model(path).predict(x)
     assert out.shape == (8, 3, 3)
     np.testing.assert_array_equal(out, max_pool(relu(conv2d_int8(x, w)), 2, 2))
+
+
+def test_odd_bias_add_1d_matches_reference(tmp_path):
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="bias_add", inputs=("c", "b"), output="d"))
+    specs = dict(_mm_specs((20, 12), (12, 28), (20, 28)),
+                 b=TensorSpec(name="b", dtype="int32", shape=(28,)),
+                 d=TensorSpec(name="d", dtype="int32", shape=(20, 28)))
+    rng = np.random.default_rng(24)
+    w = rng.integers(-128, 127, size=(12, 28), dtype=np.int8)
+    b = rng.integers(-100, 100, size=(28,), dtype=np.int32)
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w": w, "b": b}, {})
+    path = str(tmp_path / "oddbias.bin")
+    write_model(path, lg.graph, lg.weights, lg.cmds)
+    x = rng.integers(-128, 127, size=(20, 12), dtype=np.int8)
+    out = Device().load_model(path).predict(x)
+    assert out.shape == (20, 28)
+    np.testing.assert_array_equal(out, bias_add(matmul_int8(x, w), b))
+
+
+def test_odd_bias_add_full_shape_matches_reference(tmp_path):
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="bias_add", inputs=("c", "b"), output="d"))
+    specs = dict(_mm_specs((20, 12), (12, 28), (20, 28)),
+                 b=TensorSpec(name="b", dtype="int32", shape=(20, 28)),
+                 d=TensorSpec(name="d", dtype="int32", shape=(20, 28)))
+    rng = np.random.default_rng(25)
+    w = rng.integers(-128, 127, size=(12, 28), dtype=np.int8)
+    b = rng.integers(-100, 100, size=(20, 28), dtype=np.int32)
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w": w, "b": b}, {})
+    path = str(tmp_path / "oddbiasfull.bin")
+    write_model(path, lg.graph, lg.weights, lg.cmds)
+    x = rng.integers(-128, 127, size=(20, 12), dtype=np.int8)
+    out = Device().load_model(path).predict(x)
+    assert out.shape == (20, 28)
+    np.testing.assert_array_equal(out, bias_add(matmul_int8(x, w), b))
+
+
+def test_odd_requantize_matches_reference(tmp_path):
+    from python.edge_npu.reference import requantize
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="requantize", inputs=("c",), output="q"))
+    specs = dict(_mm_specs((20, 12), (12, 28), (20, 28)),
+                 q=TensorSpec(name="q", dtype="int8", shape=(20, 28), scale=0.02))
+    rng = np.random.default_rng(26)
+    w = rng.integers(-128, 127, size=(12, 28), dtype=np.int8)
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w": w}, {})
+    path = str(tmp_path / "oddrequant.bin")
+    write_model(path, lg.graph, lg.weights, lg.cmds)
+    x = rng.integers(-128, 127, size=(20, 12), dtype=np.int8)
+    out = Device().load_model(path).predict(x)
+    assert out.shape == (20, 28)
+    np.testing.assert_array_equal(out, requantize(matmul_int8(x, w), 0.02))

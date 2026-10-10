@@ -143,7 +143,12 @@ class Model:
             elif node.op == "bias_add":
                 if node.inputs[1] not in self.pack.weights:
                     raise ValueError(f"model missing weights for {node.inputs[1]!r}")
-                buf = bias_add(buf, self.pack.weights[node.inputs[1]])
+                b = self.pack.weights[node.inputs[1]]
+                if b.ndim == 1:
+                    b = _pad_to((buf.shape[-1],), b)
+                else:
+                    b = _pad_to(buf.shape, b)
+                buf = bias_add(buf, b)
             elif node.op == "max_pool":
                 buf = max_pool(buf, ew[ei - 1].m, ew[ei - 1].n)
             else:
