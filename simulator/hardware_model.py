@@ -44,3 +44,37 @@ def run_matmul(a_q: np.ndarray, b_q: np.ndarray) -> tuple[np.ndarray, int]:
     m, n, k = a_q.shape[0], b_q.shape[1], a_q.shape[1]
     cycles = (m * n * k) // MACS_PER_CYCLE
     return out, cycles
+
+
+def mac_array_conv2d(x_q: np.ndarray, w_q: np.ndarray) -> np.ndarray:
+    """INT8 valid-padding stride-1 conv accumulated in INT32.
+
+    Output-stationary scalar MAC loop, independent of the reference
+    implementation so the parity test is a real cross-check.
+    """
+    c, h, wd = x_q.shape
+    k, kc, kh, kw = w_q.shape
+    if kc != c:
+        raise ValueError(f"channel mismatch {kc} vs {c}")
+    x32 = x_q.astype(np.int32)
+    w32 = w_q.astype(np.int32)
+    oh, ow = h - kh + 1, wd - kw + 1
+    out = np.zeros((k, oh, ow), dtype=np.int32)
+    for f in range(k):
+        for i in range(oh):
+            for j in range(ow):
+                acc = np.int32(0)
+                for cc in range(c):
+                    for ki in range(kh):
+                        for kj in range(kw):
+                            acc += x32[cc, i + ki, j + kj] * w32[f, cc, ki, kj]
+                out[f, i, j] = acc
+    return out
+
+
+def run_conv2d(x_q: np.ndarray, w_q: np.ndarray) -> tuple[np.ndarray, int]:
+    out = mac_array_conv2d(x_q, w_q)
+    k, oh, ow = out.shape
+    c, kh, kw = w_q.shape[1], w_q.shape[2], w_q.shape[3]
+    cycles = (k * oh * ow * c * kh * kw) // MACS_PER_CYCLE
+    return out, cycles

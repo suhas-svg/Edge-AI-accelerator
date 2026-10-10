@@ -93,6 +93,7 @@ def main() -> None:
     print("╚══════════════════════════════════════╝")
 
     _demo_chain(rng)
+    _demo_tinycnn()
 
 
 def _demo_chain(rng: np.random.Generator) -> None:
@@ -128,6 +129,49 @@ def _demo_chain(rng: np.random.Generator) -> None:
     print("║        EdgeNPU Chain (v0.2)          ║")
     print("╠══════════════════════════════════════╣")
     print("║ matmul → relu → bias_add, 64x64      ║")
+    print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
+    print(f"║ Correctness:  max diff {diff} (exact)      ║")
+    print("╚══════════════════════════════════════╝")
+
+
+def _demo_tinycnn() -> None:
+    """v0.3 chain: conv → relu → max_pool, bit-exact vs reference."""
+    from compiler.codegen import lower_conv2d, lower_max_pool
+    from python.edge_npu.commands import Command as _Command
+    from python.edge_npu.reference import conv2d_int8, max_pool as _max_pool
+
+    crng = np.random.default_rng(SEED + 2)
+    x = crng.integers(-128, 127, size=(8, 10, 10), dtype=np.int8)
+    w = crng.integers(-128, 127, size=(8, 8, 3, 3), dtype=np.int8)
+    nodes = (Node(op="conv2d", inputs=("x", "w"), output="c"),
+             Node(op="relu", inputs=("c",), output="r"),
+             Node(op="max_pool", inputs=("r",), output="p"))
+    specs = {"x": TensorSpec(name="x", dtype="int8", shape=(8, 10, 10)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 8, 3, 3)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 8, 8)),
+             "r": TensorSpec(name="r", dtype="int32", shape=(8, 8, 8)),
+             "p": TensorSpec(name="p", dtype="int32", shape=(8, 4, 4))}
+    cmds = ([_Command(op="LOAD", address=0x1000, size=800),
+             _Command(op="LOAD", address=0x1000 + 800, size=576)]
+            + lower_conv2d(nodes[0], specs, base=0x3000)
+            + lower_relu(nodes[1], specs, base=0x3000)
+            + lower_max_pool(nodes[2], specs, base=0x4000, size=2, stride=2)
+            + [_Command(op="STORE", address=0x5000, size=512)])
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "tinycnn.bin")
+        write_model(path, Graph(nodes=nodes), {"w": w}, cmds)
+        model = Device().load_model(path)
+        out = model.predict(x)
+        stats = model.get_stats()
+    expected = _max_pool(relu(conv2d_int8(x, w)), 2, 2)
+    diff = int(np.max(np.abs(out.astype(np.int64) - expected.astype(np.int64))))
+    assert diff == 0, f"tinycnn diverged from reference by {diff}"
+
+    print()
+    print("╔══════════════════════════════════════╗")
+    print("║        EdgeNPU TinyCNN (v0.3)        ║")
+    print("╠══════════════════════════════════════╣")
+    print("║ conv → relu → max_pool, 8ch 10x10    ║")
     print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
     print(f"║ Correctness:  max diff {diff} (exact)      ║")
     print("╚══════════════════════════════════════╝")

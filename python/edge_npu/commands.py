@@ -1,12 +1,13 @@
-"""Hardware command interface (spec sections 7, 9). Binary encoding v0.2."""
+"""Hardware command interface (spec sections 7, 9). Binary encoding v0.3."""
 from __future__ import annotations
 import struct
 from dataclasses import dataclass
 from typing import Literal
 
-OpCode = Literal["LOAD", "MATMUL", "STORE", "RELU", "BIAS_ADD"]
+OpCode = Literal["LOAD", "MATMUL", "STORE", "RELU", "BIAS_ADD", "CONV2D", "MAX_POOL"]
 OP_IDS: dict[str, int] = {"LOAD": 0x01, "MATMUL": 0x02, "STORE": 0x03,
-                          "RELU": 0x04, "BIAS_ADD": 0x05}
+                          "RELU": 0x04, "BIAS_ADD": 0x05,
+                          "CONV2D": 0x06, "MAX_POOL": 0x07}
 ID_OPS: dict[int, str] = {v: k for k, v in OP_IDS.items()}
 _HEADER = struct.Struct("<HI")
 _RECORD = struct.Struct("<BIIIHHH")
