@@ -26,6 +26,20 @@ and emit `address + size` for the output in bytes:
 
 ## Executor model
 
+### Middle-end memory planner (`compiler/memory.py`)
+
+`plan_memory` assigns one slot (address + logical byte size) per tensor a
+node references; tensors in `specs` that no node references get no slot.
+Lifetimes run in scheduled node order. Per node: (1) births of inputs first
+used here, in `node.inputs` order; (2) the output's birth unless aliased;
+(3) deaths of tensors whose last consuming node is this one. Aliased
+outputs (`relu`/`bias_add` map `{out: first_input}`) share their input's
+slot, and the slot frees only after every tenant sharing it has died.
+Allocation is first-fit over freed blocks in ascending address order;
+spans round up to the alignment (default 64) while `Slot.size` keeps the
+logical bytes. Exceeding the budget raises
+`ValueError("memory plan needs {peak} bytes, budget {size}")`.
+
 The SDK executor keys buffers by stream order, not by address decoding:
 LOAD sizes must equal input then weight bytes in order; each compute
 command's shape fields and byte size must match the live buffer; the final
