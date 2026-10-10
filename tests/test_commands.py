@@ -14,8 +14,13 @@ def test_bad_magic_raises():
     with pytest.raises(ValueError):
         decode_commands(b"\x00\x00\x01\x00" + b"\x00" * 16)
 
-
 def test_roundtrip_elementwise_v02():
     cmds = [Command(op="RELU", address=0x3000, size=16384),
             Command(op="BIAS_ADD", address=0x3000, size=16384)]
+    assert decode_commands(encode_commands(cmds)) == cmds
+
+
+def test_roundtrip_conv_pool_v03():
+    cmds = [Command(op="CONV2D", address=0x3000, size=2048, m=8, n=8, k=8),
+            Command(op="MAX_POOL", address=0x4000, size=512, m=2, n=2)]
     assert decode_commands(encode_commands(cmds)) == cmds

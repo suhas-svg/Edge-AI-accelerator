@@ -51,3 +51,18 @@ def _all_vectors() -> list[str]:
 def test_all_vectors_are_parity_checked():
     """Every vector in the directory is covered by some parity test."""
     assert len(_all_vectors()) >= 7
+
+
+def test_conv_matches_reference():
+    """Simulator conv is an independent loop nest; parity + cycle formula."""
+    import numpy as np
+
+    from python.edge_npu.reference import conv2d_int8
+    from simulator.hardware_model import run_conv2d
+    rng = np.random.default_rng(7)
+    x = rng.integers(-128, 127, size=(8, 10, 10), dtype=np.int8)
+    w = rng.integers(-128, 127, size=(8, 8, 3, 3), dtype=np.int8)
+    out, cycles = run_conv2d(x, w)
+    assert out.tolist() == conv2d_int8(x, w).tolist()
+    assert out.shape == (8, 8, 8)
+    assert cycles == (8 * 8 * 8 * 8 * 3 * 3) // 64

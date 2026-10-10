@@ -102,3 +102,49 @@ def test_forked_chain_rejected(tmp_path):
     write_model(path, graph, {"w": w}, cmds)
     with pytest.raises(ValueError):
         Device().load_model(path)
+
+
+def _conv_chain_model(path):
+    from compiler.codegen import lower_conv2d, lower_max_pool, lower_relu
+    from python.edge_npu.tensor import TensorSpec
+    rng = np.random.default_rng(4)
+    w = rng.integers(-128, 127, size=(8, 8, 3, 3), dtype=np.int8)
+    nodes = (Node(op="conv2d", inputs=("x", "w"), output="c"),
+             Node(op="relu", inputs=("c",), output="r"),
+             Node(op="max_pool", inputs=("r",), output="p"))
+    specs = {"x": TensorSpec(name="x", dtype="int8", shape=(8, 10, 10)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 8, 3, 3)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 8, 8)),
+             "r": TensorSpec(name="r", dtype="int32", shape=(8, 8, 8)),
+             "p": TensorSpec(name="p", dtype="int32", shape=(8, 4, 4))}
+    nc, nh, nw = 8, 10, 10
+    cmds = ([Command(op="LOAD", address=0x1000, size=nc * nh * nw),
+             Command(op="LOAD", address=0x1000 + nc * nh * nw, size=8 * 8 * 3 * 3)]
+            + lower_conv2d(nodes[0], specs, base=0x3000)
+            + lower_relu(nodes[1], specs, base=0x3000)
+            + lower_max_pool(nodes[2], specs, base=0x4000, size=2, stride=2)
+            + [Command(op="STORE", address=0x5000, size=8 * 4 * 4 * 4)])
+    write_model(path, Graph(nodes=nodes), {"w": w}, cmds)
+    return w
+
+
+def test_conv_chain_predict_matches_reference(tmp_path):
+    from python.edge_npu.reference import conv2d_int8, max_pool, relu
+    path = str(tmp_path / "conv_chain.bin")
+    w = _conv_chain_model(path)
+    rng = np.random.default_rng(5)
+    x = rng.integers(-128, 127, size=(8, 10, 10), dtype=np.int8)
+    model = Device().load_model(path)
+    expected = max_pool(relu(conv2d_int8(x, w)), 2, 2)
+    np.testing.assert_array_equal(model.predict(x), expected)
+    assert model.get_stats()["cycles"] == (8 * 8 * 8 * 8 * 3 * 3) // 64
+
+
+def test_pool_first_rejected(tmp_path):
+    graph = Graph(nodes=(Node(op="max_pool", inputs=("x",), output="p"),))
+    w = np.ones((8, 8), dtype=np.int8)
+    cmds = [Command(op="MAX_POOL", address=0x4000, size=256, m=2, n=2)]
+    path = str(tmp_path / "poolfirst.bin")
+    write_model(path, graph, {"w": w}, cmds)
+    with pytest.raises(ValueError):
+        Device().load_model(path)

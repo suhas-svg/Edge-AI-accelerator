@@ -6,8 +6,8 @@ import time
 import numpy as np
 
 from compiler.binary import ModelPack, read_model
-from python.edge_npu.reference import bias_add, relu
-from simulator.hardware_model import MACS_PER_CYCLE, run_matmul
+from python.edge_npu.reference import bias_add, max_pool, relu
+from simulator.hardware_model import MACS_PER_CYCLE, run_conv2d, run_matmul
 
 
 class Model:
@@ -24,11 +24,11 @@ class Model:
     @staticmethod
     def _validate_chain(nodes: list) -> list:
         ops = [n.op for n in nodes]
-        if not ops or ops[0] != "matmul":
-            raise ValueError(f"SDK chain must start with matmul, got {ops}")
+        if not ops or ops[0] not in ("matmul", "conv2d"):
+            raise ValueError(f"SDK chain must start with matmul or conv2d, got {ops}")
         for op in ops[1:]:
-            if op not in ("relu", "bias_add"):
-                raise ValueError(f"SDK chain supports matmul→relu→bias_add, got {ops}")
+            if op not in ("relu", "bias_add", "max_pool"):
+                raise ValueError(f"SDK chain supports matmul/conv2d→relu→bias_add→max_pool, got {ops}")
         prev = nodes[0].output
         for node in nodes[1:]:
             if node.inputs[0] != prev:
@@ -40,25 +40,42 @@ class Model:
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         nodes = self.pack.graph.nodes
-        mm = nodes[0]
-        if mm.inputs[1] not in self.pack.weights:
-            raise ValueError(f"model missing weights for {mm.inputs[1]!r}")
-        w = self.pack.weights[mm.inputs[1]]
-        a = np.ascontiguousarray(x, dtype=np.int8)
-        m, k = a.shape
-        kb, n = w.shape
-        if k != kb:
-            raise ValueError(f"input inner dim {k} vs weights {kb}")
-        matmuls = [c for c in self.pack.cmds if c.op == "MATMUL"]
-        if len(matmuls) != 1 or (matmuls[0].m, matmuls[0].n, matmuls[0].k) != (m, n, k):
-            raise ValueError("command stream MATMUL does not match graph shapes")
-        loads = [c for c in self.pack.cmds if c.op == "LOAD"]
-        if [c.size for c in loads] != [a.nbytes, w.nbytes]:
-            raise ValueError("command stream LOAD sizes do not match tensor bytes")
-        buf, cycles = run_matmul(a, w)
-        prev = mm.output
-        # Elementwise cycles are not modeled yet; the MAC count stands.
-        ew = [c for c in self.pack.cmds if c.op in ("RELU", "BIAS_ADD")]
+        first = nodes[0]
+        if first.inputs[1] not in self.pack.weights:
+            raise ValueError(f"model missing weights for {first.inputs[1]!r}")
+        w = self.pack.weights[first.inputs[1]]
+        if first.op == "matmul":
+            a = np.ascontiguousarray(x, dtype=np.int8)
+            m, k = a.shape
+            kb, n = w.shape
+            if k != kb:
+                raise ValueError(f"input inner dim {k} vs weights {kb}")
+            matmuls = [c for c in self.pack.cmds if c.op == "MATMUL"]
+            if len(matmuls) != 1 or (matmuls[0].m, matmuls[0].n, matmuls[0].k) != (m, n, k):
+                raise ValueError("command stream MATMUL does not match graph shapes")
+            loads = [c for c in self.pack.cmds if c.op == "LOAD"]
+            if [c.size for c in loads] != [a.nbytes, w.nbytes]:
+                raise ValueError("command stream LOAD sizes do not match tensor bytes")
+            buf, cycles = run_matmul(a, w)
+            macs = m * n * k
+        else:
+            a = np.ascontiguousarray(x, dtype=np.int8)
+            c, h, wd = a.shape
+            k, kc, kh, kw = w.shape
+            if kc != c:
+                raise ValueError(f"input channels {c} vs weights {kc}")
+            oh, ow = h - kh + 1, wd - kw + 1
+            convs = [c_ for c_ in self.pack.cmds if c_.op == "CONV2D"]
+            if len(convs) != 1 or (convs[0].m, convs[0].n, convs[0].k) != (k, oh, ow):
+                raise ValueError("command stream CONV2D does not match graph shapes")
+            loads = [c_ for c_ in self.pack.cmds if c_.op == "LOAD"]
+            if [c_.size for c_ in loads] != [a.nbytes, w.nbytes]:
+                raise ValueError("command stream LOAD sizes do not match tensor bytes")
+            buf, cycles = run_conv2d(a, w)
+            macs = k * oh * ow * c * kh * kw
+        prev = first.output
+        # Elementwise/pool cycles are not modeled yet; the MAC count stands.
+        ew = [c_ for c_ in self.pack.cmds if c_.op in ("RELU", "BIAS_ADD", "MAX_POOL")]
         ei = 0
         for node in nodes[1:]:
             if node.inputs[0] != prev:
@@ -67,25 +84,29 @@ class Model:
                 )
             if ei >= len(ew) or ew[ei].op != node.op.upper():
                 raise ValueError(f"command stream missing {node.op} for chain step")
-            if ew[ei].size != buf.nbytes:
+            if node.op != "max_pool" and ew[ei].size != buf.nbytes:
                 raise ValueError(
                     f"command stream {ew[ei].op} size does not match buffer bytes"
                 )
             ei += 1
             if node.op == "relu":
                 buf = relu(buf)
-            else:
+            elif node.op == "bias_add":
                 if node.inputs[1] not in self.pack.weights:
                     raise ValueError(f"model missing weights for {node.inputs[1]!r}")
                 buf = bias_add(buf, self.pack.weights[node.inputs[1]])
+            else:
+                buf = max_pool(buf, ew[ei - 1].m, ew[ei - 1].n)
+            if ei - 1 < len(ew) and ew[ei - 1].size != buf.nbytes and node.op == "max_pool":
+                raise ValueError("command stream MAX_POOL size does not match output bytes")
             prev = node.output
         if ei != len(ew):
             raise ValueError("command stream has extra elementwise commands")
-        stores = [c for c in self.pack.cmds if c.op == "STORE"]
-        if [c.size for c in stores] != [buf.nbytes]:
+        stores = [c_ for c_ in self.pack.cmds if c_.op == "STORE"]
+        if [c_.size for c_ in stores] != [buf.nbytes]:
             raise ValueError("command stream STORE size does not match output bytes")
         self._cycles = cycles
-        self._macs = m * n * k
+        self._macs = macs
         return buf
 
     def get_stats(self) -> dict:

@@ -57,8 +57,8 @@ def _check_elementwise(node: Node, specs: dict[str, TensorSpec], arity: int) -> 
         if name not in specs:
             raise ValueError(f"unknown tensor {name!r}")
     out = specs[node.output]
-    if len(out.shape) != 2:
-        raise ValueError(f"tensor {out.name!r} must be rank 2, got shape {out.shape}")
+    if len(out.shape) not in (2, 3):
+        raise ValueError(f"tensor {out.name!r} must be rank 2 or 3, got shape {out.shape}")
     if _numel(out.shape) % (TILE * TILE) != 0:
         raise ValueError(
             f"tensor {out.name!r} has {_numel(out.shape)} elements, "
@@ -91,3 +91,59 @@ def lower_bias_add(node: Node, specs: dict[str, TensorSpec], base: int) -> list[
             f"nor to {out.shape}"
         )
     return [Command(op="BIAS_ADD", address=base, size=_numel(out.shape) * _DTYPE_BYTES[out.dtype])]
+
+
+def lower_conv2d(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Command]:
+    """Valid-padding stride-1 conv. Encodes m=K, n=OH, k=OW."""
+    if node.op != "conv2d":
+        raise ValueError(f"lower_conv2d needs a conv2d node, got {node.op!r}")
+    if len(node.inputs) != 2:
+        raise ValueError(f"conv2d needs 2 inputs, got {len(node.inputs)}")
+    for name in (*node.inputs, node.output):
+        if name not in specs:
+            raise ValueError(f"unknown tensor {name!r}")
+    x, w, y = specs[node.inputs[0]], specs[node.inputs[1]], specs[node.output]
+    if len(x.shape) != 3:
+        raise ValueError(f"conv input must be (C,H,W), got {x.shape}")
+    if len(w.shape) != 4:
+        raise ValueError(f"conv weight must be (K,C,KH,KW), got {w.shape}")
+    if len(y.shape) != 3:
+        raise ValueError(f"conv output must be (K,OH,OW), got {y.shape}")
+    c, h, wd = x.shape
+    k, kc, kh, kw = w.shape
+    if kc != c:
+        raise ValueError(f"conv channel mismatch weight {kc} vs input {c}")
+    if kh != kw:
+        raise ValueError(f"conv kernel must be square, got ({kh}, {kw})")
+    oh, ow = h - kh + 1, wd - kw + 1
+    if y.shape != (k, oh, ow):
+        raise ValueError(f"conv output shape {y.shape} != ({k}, {oh}, {ow})")
+    for name, dim in (("K", k), ("C", c), ("OH", oh), ("OW", ow)):
+        if dim % TILE != 0:
+            raise ValueError(f"conv dim {name}={dim} not divisible by {TILE}")
+    return [Command(op="CONV2D", address=base,
+                    size=_numel(y.shape) * _DTYPE_BYTES[y.dtype], m=k, n=oh, k=ow)]
+
+
+def lower_max_pool(node: Node, specs: dict[str, TensorSpec], base: int,
+                   size: int = 2, stride: int = 2) -> list[Command]:
+    if node.op != "max_pool":
+        raise ValueError(f"lower_max_pool needs a max_pool node, got {node.op!r}")
+    if len(node.inputs) != 1:
+        raise ValueError(f"max_pool needs 1 input, got {len(node.inputs)}")
+    for name in (*node.inputs, node.output):
+        if name not in specs:
+            raise ValueError(f"unknown tensor {name!r}")
+    if size <= 0 or stride <= 0:
+        raise ValueError(f"pool size={size} stride={stride} must be positive")
+    x, y = specs[node.inputs[0]], specs[node.output]
+    if len(x.shape) != 3 or len(y.shape) != 3:
+        raise ValueError(f"pool tensors must be (C,H,W), got {x.shape} → {y.shape}")
+    c, h, wd = x.shape
+    oh, ow = (h - size) // stride + 1, (wd - size) // stride + 1
+    if oh <= 0 or ow <= 0:
+        raise ValueError(f"pool window {size} larger than input ({h}, {wd})")
+    if y.shape != (c, oh, ow):
+        raise ValueError(f"pool output shape {y.shape} != ({c}, {oh}, {ow})")
+    return [Command(op="MAX_POOL", address=base,
+                    size=_numel(y.shape) * _DTYPE_BYTES[y.dtype], m=size, n=stride)]
