@@ -8,6 +8,11 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from python.edge_npu.reference import matmul_fp32, matmul_int8, quantize_int8
+from python.edge_npu.sdk import Device
+from python.edge_npu.tensor import TensorSpec
+from compiler.binary import write_model
+from compiler.codegen import lower_matmul
+from compiler.graph import Graph, Node
 
 SIZES = [64, 128, 256]
 SCALE = 0.05
@@ -32,18 +37,44 @@ def _time_ms(fn, *args) -> float:
     return float(np.median(samples))
 
 
+def _edgenpu_sim(aq: np.ndarray, bq: np.ndarray, tmp: str) -> tuple[float, int]:
+    """Pack aq/bq's shapes through compiler → model.bin → SDK predict.
+
+    Returns (median wall ms, sim cycles). Numerics equal matmul_int8;
+    the point is the full compile→pack→load→infer path plus cycle counts.
+    """
+    s = aq.shape[0]
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(s, s)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(s, s)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(s, s))}
+    cmds = lower_matmul(node, specs, base=0x1000)
+    path = os.path.join(tmp, f"bench_{s}.bin")
+    write_model(path, Graph(nodes=(node,)), {"w": bq}, cmds)
+    model = Device().load_model(path)
+    bench = Device().benchmark(model, aq, repeats=REPEATS)
+    return round(bench["median_ms"], 3), model.get_stats()["cycles"]
+
+
 def run() -> None:
+    import tempfile
+
     rng = np.random.default_rng(SEED)
     rows = []
-    for s in SIZES:
-        a = rng.standard_normal((s, s)).astype(np.float32)
-        b = rng.standard_normal((s, s)).astype(np.float32)
-        fp32_ms = _time_ms(matmul_fp32, a, b)
-        aq, bq = quantize_int8(a, SCALE), quantize_int8(b, SCALE)
-        int8_ms = _time_ms(matmul_int8, aq, bq)
-        rows.append({"size": s, "fp32_ms": round(fp32_ms, 3), "int8_ms": round(int8_ms, 3)})
+    with tempfile.TemporaryDirectory() as tmp:
+        for s in SIZES:
+            a = rng.standard_normal((s, s)).astype(np.float32)
+            b = rng.standard_normal((s, s)).astype(np.float32)
+            fp32_ms = _time_ms(matmul_fp32, a, b)
+            aq, bq = quantize_int8(a, SCALE), quantize_int8(b, SCALE)
+            int8_ms = _time_ms(matmul_int8, aq, bq)
+            sim_ms, cycles = _edgenpu_sim(aq, bq, tmp)
+            rows.append({"size": s, "fp32_ms": round(fp32_ms, 3),
+                         "int8_ms": round(int8_ms, 3),
+                         "edgenpu_sim_ms": sim_ms, "edgenpu_cycles": cycles})
     with open(OUT, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["size", "fp32_ms", "int8_ms"])
+        w = csv.DictWriter(f, fieldnames=["size", "fp32_ms", "int8_ms",
+                                          "edgenpu_sim_ms", "edgenpu_cycles"])
         w.writeheader()
         w.writerows(rows)
     print(rows)
