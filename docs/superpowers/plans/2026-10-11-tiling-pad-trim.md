@@ -327,7 +327,7 @@ Pad flat inputs/weights with zeros to the LOAD sizes and reshape to the padded g
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_tiling.py tests/test_sdk.py -q`
-Expected: PASS — 14/14 in `test_tiling.py`, 12/12 in `test_sdk.py` (unmodified file proves aligned-model behavior is unchanged).
+Expected: PASS — 14/14 in `test_tiling.py`, 9/9 in `test_sdk.py` (unmodified file proves aligned-model behavior is unchanged).
 
 - [ ] **Step 5: Full suite + commit**
 

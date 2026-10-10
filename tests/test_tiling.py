@@ -1,9 +1,12 @@
 import numpy as np
 import pytest
 
+from compiler.binary import write_model
 from compiler.graph import Graph, Node
 from compiler.middleend import legalize, lower_graph, schedule
 from python.edge_npu.commands import Command
+from python.edge_npu.reference import bias_add, matmul_int8, relu
+from python.edge_npu.sdk import Device
 from python.edge_npu.tensor import TensorSpec
 
 
@@ -122,3 +125,53 @@ def test_lower_graph_odd_dims_still_rejected_below_legalize():
     node = Node(op="matmul", inputs=("a", "w"), output="c")
     with pytest.raises(ValueError, match="not divisible"):
         lower_matmul(node, _mm_specs((60, 64), (64, 64), (60, 64)), base=0x1000)
+
+
+def test_odd_matmul_end_to_end_matches_reference(tmp_path):
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = _mm_specs((20, 12), (12, 28), (20, 28))
+    rng = np.random.default_rng(21)
+    w = rng.integers(-128, 127, size=(12, 28), dtype=np.int8)
+    lg = lower_graph(Graph(nodes=(node,)), specs, {"w": w}, {})
+    path = str(tmp_path / "odd.bin")
+    write_model(path, lg.graph, lg.weights, lg.cmds)
+    x = rng.integers(-128, 127, size=(20, 12), dtype=np.int8)
+    out = Device().load_model(path).predict(x)
+    assert out.shape == (20, 28)
+    np.testing.assert_array_equal(out, matmul_int8(x, w))
+
+
+def test_tiny_row_tiles_and_trims(tmp_path):
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = _mm_specs((1, 8), (8, 8), (1, 8))
+    rng = np.random.default_rng(22)
+    w = rng.integers(-128, 127, size=(8, 8), dtype=np.int8)
+    lg = lower_graph(Graph(nodes=(node,)), specs, {"w": w}, {})
+    path = str(tmp_path / "tiny.bin")
+    write_model(path, lg.graph, lg.weights, lg.cmds)
+    x = rng.integers(-128, 127, size=(1, 8), dtype=np.int8)
+    out = Device().load_model(path).predict(x)
+    assert out.shape == (1, 8)
+    np.testing.assert_array_equal(out, matmul_int8(x, w))
+
+
+def test_odd_conv_pool_matches_reference(tmp_path):
+    from python.edge_npu.reference import conv2d_int8, max_pool
+    nodes = (Node(op="conv2d", inputs=("x", "w"), output="c"),
+             Node(op="relu", inputs=("c",), output="r"),
+             Node(op="max_pool", inputs=("r",), output="p"))
+    specs = {"x": TensorSpec(name="x", dtype="int8", shape=(4, 9, 9)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 4, 3, 3)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 7, 7)),
+             "r": TensorSpec(name="r", dtype="int32", shape=(8, 7, 7)),
+             "p": TensorSpec(name="p", dtype="int32", shape=(8, 3, 3))}
+    rng = np.random.default_rng(23)
+    w = rng.integers(-128, 127, size=(8, 4, 3, 3), dtype=np.int8)
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w": w},
+                     {"p": {"size": 2, "stride": 2}})
+    path = str(tmp_path / "oddcnn.bin")
+    write_model(path, lg.graph, lg.weights, lg.cmds)
+    x = rng.integers(-128, 127, size=(4, 9, 9), dtype=np.int8)
+    out = Device().load_model(path).predict(x)
+    assert out.shape == (8, 3, 3)
+    np.testing.assert_array_equal(out, max_pool(relu(conv2d_int8(x, w)), 2, 2))
