@@ -94,6 +94,7 @@ def main() -> None:
 
     _demo_chain(rng)
     _demo_tinycnn()
+    _demo_onnx_pipeline()
 
 
 def _demo_chain(rng: np.random.Generator) -> None:
@@ -181,6 +182,57 @@ def _demo_tinycnn() -> None:
     print("╠══════════════════════════════════════╣")
     print("║ conv → relu → max_pool, 8ch 10x10    ║")
     print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
+    print(f"║ Correctness:  max diff {diff} (exact)      ║")
+    print("╚══════════════════════════════════════╝")
+
+
+def _demo_onnx_pipeline() -> None:
+    """Full pipeline: .onnx file → parse → quantize → lower → pack → predict."""
+    from onnx import TensorProto, helper, save_model
+    from compiler.frontend import load_onnx
+    from compiler.quantize import quantize_activations, quantize_specs, quantize_weights
+
+    orng = np.random.default_rng(SEED + 3)
+    af = orng.standard_normal((SIZE, SIZE)).astype(np.float32)
+    wf = orng.standard_normal((SIZE, SIZE)).astype(np.float32)
+    with tempfile.TemporaryDirectory() as tmp:
+        onnx_path = os.path.join(tmp, "tiny.onnx")
+        graph_proto = helper.make_graph(
+            [helper.make_node("MatMul", ["a", "w"], ["c"])], "tiny-mm",
+            [helper.make_tensor_value_info("a", TensorProto.FLOAT, [SIZE, SIZE])],
+            [helper.make_tensor_value_info("c", TensorProto.FLOAT, [SIZE, SIZE])],
+            [helper.make_tensor("w", TensorProto.FLOAT, [SIZE, SIZE],
+                                wf.flatten().tolist())])
+        save_model(helper.make_model(
+            graph_proto, opset_imports=[helper.make_opsetid("", 17)]), onnx_path)
+        graph, weights, specs, _ = load_onnx(onnx_path)
+        qw, wscales = quantize_weights(weights)
+        ascales = quantize_activations({"a": [af]})
+        qspecs = quantize_specs(graph, specs, {**wscales, **ascales})
+        node = graph.nodes[0]
+        cmds = lower_matmul(node, qspecs, base=0x1000)
+        bin_path = os.path.join(tmp, "onnx.bin")
+        write_model(bin_path, graph, qw, cmds)
+        model = Device().load_model(bin_path)
+        aq = quantize_int8(af, ascales["a"])
+        out = model.predict(aq)
+        stats = model.get_stats()
+    expected = matmul_int8(aq, qw["w"])
+    diff = int(np.max(np.abs(out.astype(np.int64) - expected.astype(np.int64))))
+    assert diff == 0, f"onnx pipeline diverged by {diff}"
+    qerr = quantization_error(
+        af.astype(np.float32) @ wf.astype(np.float32),
+        dequantize_int8(aq, ascales["a"]) @ dequantize_int8(qw["w"], wscales["w"]),
+    )
+
+    print()
+    print("╔══════════════════════════════════════╗")
+    print("║       EdgeNPU ONNX Pipeline        ║")
+    print("╠══════════════════════════════════════╣")
+    print("║ onnx→parse→quant→lower→pack→run      ║")
+    print(f"║ w scale:      {wscales['w']:>8.5f}             ║")
+    print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
+    print(f"║ Quant err:    {qerr:>8.4f}               ║")
     print(f"║ Correctness:  max diff {diff} (exact)      ║")
     print("╚══════════════════════════════════════╝")
 
