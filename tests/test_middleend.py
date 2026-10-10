@@ -1,7 +1,8 @@
+import numpy as np
 import pytest
 
 from compiler.graph import Graph, Node
-from compiler.middleend import schedule
+from compiler.middleend import optimize, schedule
 from python.edge_npu.tensor import TensorSpec
 
 
@@ -49,3 +50,41 @@ def test_schedule_deterministic_tie_break():
     b = Node(op="relu", inputs=("x",), output="y")
     order = schedule(Graph(nodes=(c, a, b)), _specs("p", "q", "x", "y", "z"))
     assert [n.output for n in order] == ["q", "y", "z"]
+
+
+def test_collapse_double_relu():
+    g = Graph(nodes=(Node(op="matmul", inputs=("a", "w"), output="c"),
+                     Node(op="relu", inputs=("c",), output="r1"),
+                     Node(op="relu", inputs=("r1",), output="r2")))
+    out, _ = optimize(g, {"w": np.ones((8, 8), dtype=np.int8)})
+    assert [n.output for n in out.nodes] == ["c", "r1"]
+
+
+def test_collapse_rewires_consumers_to_surviving_relu():
+    g = Graph(nodes=(Node(op="matmul", inputs=("a", "w"), output="c"),
+                     Node(op="relu", inputs=("c",), output="r1"),
+                     Node(op="relu", inputs=("r1",), output="r2"),
+                     Node(op="requantize", inputs=("r2",), output="q")))
+    out, _ = optimize(g, {"w": np.ones((8, 8), dtype=np.int8)})
+    assert [n.output for n in out.nodes] == ["c", "r1", "q"]
+    assert out.nodes[2].inputs == ("r1",)
+
+
+def test_prune_weights():
+    g = Graph(nodes=(Node(op="matmul", inputs=("a", "w"), output="c"),))
+    weights = {"w": np.ones((8, 8), dtype=np.int8),
+               "orphan": np.zeros((4,), dtype=np.int32)}
+    out, pruned = optimize(g, weights)
+    assert set(pruned) == {"w"}
+    assert set(weights) == {"w", "orphan"}  # input dict untouched
+
+
+def test_optimize_fixed_point():
+    g = Graph(nodes=(Node(op="matmul", inputs=("a", "w"), output="c"),
+                     Node(op="relu", inputs=("c",), output="r1"),
+                     Node(op="relu", inputs=("r1",), output="r2"),
+                     Node(op="relu", inputs=("r2",), output="r3")))
+    w = {"w": np.ones((8, 8), dtype=np.int8)}
+    once, w1 = optimize(g, w)
+    twice, w2 = optimize(once, w1)
+    assert twice == once and w2.keys() == w1.keys()

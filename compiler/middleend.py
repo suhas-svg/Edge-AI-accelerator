@@ -1,6 +1,8 @@
 """Compiler middle-end: schedule, optimize, validate, lower."""
 from __future__ import annotations
 
+import numpy as np
+
 from compiler.graph import Graph, Node
 from python.edge_npu.tensor import TensorSpec
 
@@ -44,3 +46,30 @@ def schedule(graph: Graph, specs: dict[str, TensorSpec]) -> list[Node]:
         remaining = sorted(nodes[i].output for i, done in enumerate(emitted) if not done)
         raise ValueError(f"graph has a cycle involving {remaining!r}")
     return order
+
+
+def optimize(graph: Graph,
+             weights: dict[str, np.ndarray]) -> tuple[Graph, dict[str, np.ndarray]]:
+    """Collapse relu->relu chains, prune unreferenced weights. Fixed point."""
+    nodes = list(graph.nodes)
+    changed = True
+    while changed:
+        changed = False
+        by_output = {n.output: n for n in nodes}
+        for b in nodes:
+            if b.op != "relu" or len(b.inputs) != 1:
+                continue
+            a = by_output.get(b.inputs[0])
+            if a is None or a.op != "relu":
+                continue
+            nodes = [n for n in nodes if n.output != b.output]
+            nodes = [Node(op=n.op,
+                          inputs=tuple(a.output if i == b.output else i for i in n.inputs),
+                          output=n.output) for n in nodes]
+            changed = True
+            break
+    referenced: set[str] = set()
+    for n in nodes:
+        referenced.update(n.inputs)
+    pruned = {k: v for k, v in weights.items() if k in referenced}
+    return Graph(nodes=tuple(nodes)), pruned
