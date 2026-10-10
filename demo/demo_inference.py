@@ -16,7 +16,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from compiler.binary import write_model
-from compiler.codegen import lower_bias_add, lower_matmul, lower_relu
+from compiler.middleend import lower_graph
 from compiler.graph import Graph, Node
 from python.edge_npu.commands import Command  # noqa: F401  (re-export check)
 from python.edge_npu.reference import (
@@ -63,11 +63,11 @@ def main() -> None:
     specs = {"a": TensorSpec(name="a", dtype="int8", shape=(SIZE, SIZE)),
              "w": TensorSpec(name="w", dtype="int8", shape=(SIZE, SIZE)),
              "c": TensorSpec(name="c", dtype="int32", shape=(SIZE, SIZE))}
-    cmds = lower_matmul(node, specs, base=0x1000)
+    lg = lower_graph(Graph(nodes=(node,)), specs, {"w": bq}, {})
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "demo.bin")
-        write_model(path, Graph(nodes=(node,)), {"w": bq}, cmds)
+        write_model(path, lg.graph, lg.weights, lg.cmds)
         model = Device().load_model(path)
         out = model.predict(aq)
         cpu_ms = _median_ms(matmul_int8, aq, bq)
@@ -99,7 +99,6 @@ def main() -> None:
 
 def _demo_chain(rng: np.random.Generator) -> None:
     """v0.2 chain + v0.4 tail: matmul → relu → bias_add → requantize."""
-    from compiler.codegen import lower_requantize
     brng = np.random.default_rng(SEED + 1)
     b = brng.integers(-100, 100, size=(SIZE,), dtype=np.int32)
     aq = quantize_int8(rng.standard_normal((SIZE, SIZE)).astype(np.float32), SCALE)
@@ -115,15 +114,11 @@ def _demo_chain(rng: np.random.Generator) -> None:
              "r": TensorSpec(name="r", dtype="int32", shape=(SIZE, SIZE)),
              "b": TensorSpec(name="b", dtype="int32", shape=(SIZE,)),
              "d": TensorSpec(name="d", dtype="int32", shape=(SIZE, SIZE)),
-             "q": TensorSpec(name="q", dtype="int8", shape=(SIZE, SIZE))}
-    cmds = (lower_matmul(nodes[0], specs, base=0x1000)
-            + lower_relu(nodes[1], specs, base=0x3000)
-            + lower_bias_add(nodes[2], specs, base=0x3000)
-            + lower_requantize(nodes[3], specs, base=0x5000, scale=scale)
-            + [Command(op="STORE", address=0x6000, size=SIZE * SIZE)])
+             "q": TensorSpec(name="q", dtype="int8", shape=(SIZE, SIZE), scale=scale)}
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w": w, "b": b}, {})
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "chain.bin")
-        write_model(path, Graph(nodes=nodes), {"w": w, "b": b}, cmds)
+        write_model(path, lg.graph, lg.weights, lg.cmds)
         model = Device().load_model(path)
         out = model.predict(aq)
         stats = model.get_stats()
@@ -145,8 +140,6 @@ def _demo_chain(rng: np.random.Generator) -> None:
 
 def _demo_tinycnn() -> None:
     """v0.3 chain: conv → relu → max_pool, bit-exact vs reference."""
-    from compiler.codegen import lower_conv2d, lower_max_pool
-    from python.edge_npu.commands import Command as _Command
     from python.edge_npu.reference import conv2d_int8, max_pool as _max_pool
 
     crng = np.random.default_rng(SEED + 2)
@@ -160,15 +153,11 @@ def _demo_tinycnn() -> None:
              "c": TensorSpec(name="c", dtype="int32", shape=(8, 8, 8)),
              "r": TensorSpec(name="r", dtype="int32", shape=(8, 8, 8)),
              "p": TensorSpec(name="p", dtype="int32", shape=(8, 4, 4))}
-    cmds = ([_Command(op="LOAD", address=0x1000, size=800),
-             _Command(op="LOAD", address=0x1000 + 800, size=576)]
-            + lower_conv2d(nodes[0], specs, base=0x3000)
-            + lower_relu(nodes[1], specs, base=0x3000)
-            + lower_max_pool(nodes[2], specs, base=0x4000, size=2, stride=2)
-            + [_Command(op="STORE", address=0x5000, size=512)])
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w": w},
+                     {"p": {"size": 2, "stride": 2}})
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "tinycnn.bin")
-        write_model(path, Graph(nodes=nodes), {"w": w}, cmds)
+        write_model(path, lg.graph, lg.weights, lg.cmds)
         model = Device().load_model(path)
         out = model.predict(x)
         stats = model.get_stats()
@@ -205,14 +194,13 @@ def _demo_onnx_pipeline() -> None:
                                 wf.flatten().tolist())])
         save_model(helper.make_model(
             graph_proto, opset_imports=[helper.make_opsetid("", 17)]), onnx_path)
-        graph, weights, specs, _ = load_onnx(onnx_path)
+        graph, weights, specs, attrs = load_onnx(onnx_path)
         qw, wscales = quantize_weights(weights)
         ascales = quantize_activations({"a": [af]})
         qspecs = quantize_specs(graph, specs, {**wscales, **ascales})
-        node = graph.nodes[0]
-        cmds = lower_matmul(node, qspecs, base=0x1000)
+        lg = lower_graph(graph, qspecs, qw, attrs)
         bin_path = os.path.join(tmp, "onnx.bin")
-        write_model(bin_path, graph, qw, cmds)
+        write_model(bin_path, lg.graph, lg.weights, lg.cmds)
         model = Device().load_model(bin_path)
         aq = quantize_int8(af, ascales["a"])
         out = model.predict(aq)

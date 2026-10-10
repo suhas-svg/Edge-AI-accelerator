@@ -11,8 +11,8 @@ from python.edge_npu.reference import matmul_fp32, matmul_int8, quantize_int8
 from python.edge_npu.sdk import Device
 from python.edge_npu.tensor import TensorSpec
 from compiler.binary import write_model
-from compiler.codegen import lower_matmul
 from compiler.graph import Graph, Node
+from compiler.middleend import lower_graph
 
 SIZES = [64, 128, 256]
 SCALE = 0.05
@@ -48,9 +48,9 @@ def _edgenpu_sim(aq: np.ndarray, bq: np.ndarray, tmp: str) -> tuple[float, int]:
     specs = {"a": TensorSpec(name="a", dtype="int8", shape=(s, s)),
              "w": TensorSpec(name="w", dtype="int8", shape=(s, s)),
              "c": TensorSpec(name="c", dtype="int32", shape=(s, s))}
-    cmds = lower_matmul(node, specs, base=0x1000)
+    lg = lower_graph(Graph(nodes=(node,)), specs, {"w": bq}, {})
     path = os.path.join(tmp, f"bench_{s}.bin")
-    write_model(path, Graph(nodes=(node,)), {"w": bq}, cmds)
+    write_model(path, lg.graph, lg.weights, lg.cmds)
     model = Device().load_model(path)
     bench = Device().benchmark(model, aq, repeats=REPEATS)
     return round(bench["median_ms"], 3), model.get_stats()["cycles"]
