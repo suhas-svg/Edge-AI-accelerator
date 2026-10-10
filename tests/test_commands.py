@@ -24,3 +24,11 @@ def test_roundtrip_conv_pool_v03():
     cmds = [Command(op="CONV2D", address=0x3000, size=2048, m=8, n=8, k=8),
             Command(op="MAX_POOL", address=0x4000, size=512, m=2, n=2)]
     assert decode_commands(encode_commands(cmds)) == cmds
+
+
+def test_roundtrip_requantize_v04():
+    import struct
+    scale_bits = struct.unpack("<I", struct.pack("<f", 0.05))[0]
+    cmds = [Command(op="REQUANTIZE", address=0x5000, size=64,
+                    reserved=scale_bits, m=128)]
+    assert decode_commands(encode_commands(cmds)) == cmds

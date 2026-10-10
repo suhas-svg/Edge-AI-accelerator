@@ -1,12 +1,13 @@
 """Developer SDK (spec section 20). Backed by the simulator until FPGA exists."""
 from __future__ import annotations
 
+import struct
 import time
 
 import numpy as np
 
 from compiler.binary import ModelPack, read_model
-from python.edge_npu.reference import bias_add, max_pool, relu
+from python.edge_npu.reference import bias_add, max_pool, relu, requantize
 from simulator.hardware_model import MACS_PER_CYCLE, run_conv2d, run_matmul
 
 
@@ -27,8 +28,8 @@ class Model:
         if not ops or ops[0] not in ("matmul", "conv2d"):
             raise ValueError(f"SDK chain must start with matmul or conv2d, got {ops}")
         for op in ops[1:]:
-            if op not in ("relu", "bias_add", "max_pool"):
-                raise ValueError(f"SDK chain supports matmul/conv2d→relu→bias_add→max_pool, got {ops}")
+            if op not in ("relu", "bias_add", "max_pool", "requantize"):
+                raise ValueError(f"SDK chain supports matmul/conv2d→relu→bias_add→max_pool→requantize, got {ops}")
         prev = nodes[0].output
         for node in nodes[1:]:
             if node.inputs[0] != prev:
@@ -75,7 +76,8 @@ class Model:
             macs = k * oh * ow * c * kh * kw
         prev = first.output
         # Elementwise/pool cycles are not modeled yet; the MAC count stands.
-        ew = [c_ for c_ in self.pack.cmds if c_.op in ("RELU", "BIAS_ADD", "MAX_POOL")]
+        ew = [c_ for c_ in self.pack.cmds
+              if c_.op in ("RELU", "BIAS_ADD", "MAX_POOL", "REQUANTIZE")]
         ei = 0
         for node in nodes[1:]:
             if node.inputs[0] != prev:
@@ -84,7 +86,7 @@ class Model:
                 )
             if ei >= len(ew) or ew[ei].op != node.op.upper():
                 raise ValueError(f"command stream missing {node.op} for chain step")
-            if node.op != "max_pool" and ew[ei].size != buf.nbytes:
+            if node.op != "max_pool" and node.op != "requantize" and ew[ei].size != buf.nbytes:
                 raise ValueError(
                     f"command stream {ew[ei].op} size does not match buffer bytes"
                 )
@@ -95,16 +97,19 @@ class Model:
                 if node.inputs[1] not in self.pack.weights:
                     raise ValueError(f"model missing weights for {node.inputs[1]!r}")
                 buf = bias_add(buf, self.pack.weights[node.inputs[1]])
-            else:
+            elif node.op == "max_pool":
                 buf = max_pool(buf, ew[ei - 1].m, ew[ei - 1].n)
-            if ei - 1 < len(ew) and ew[ei - 1].size != buf.nbytes and node.op == "max_pool":
-                raise ValueError("command stream MAX_POOL size does not match output bytes")
+            else:
+                (scale,) = struct.unpack("<f", struct.pack("<I", ew[ei - 1].reserved))
+                buf = requantize(buf, scale, ew[ei - 1].m - 128)
+            if ew[ei - 1].size != buf.nbytes and node.op in ("max_pool", "requantize"):
+                raise ValueError(f"command stream {ew[ei-1].op} size does not match output bytes")
             prev = node.output
         if ei != len(ew):
             raise ValueError("command stream has extra elementwise commands")
         stores = [c_ for c_ in self.pack.cmds if c_.op == "STORE"]
-        if [c_.size for c_ in stores] != [buf.nbytes]:
-            raise ValueError("command stream STORE size does not match output bytes")
+        if not stores or stores[-1].size != buf.nbytes:
+            raise ValueError("command stream final STORE size does not match output bytes")
         self._cycles = cycles
         self._macs = macs
         return buf

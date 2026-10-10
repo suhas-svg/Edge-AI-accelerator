@@ -148,3 +148,33 @@ def test_pool_first_rejected(tmp_path):
     write_model(path, graph, {"w": w}, cmds)
     with pytest.raises(ValueError):
         Device().load_model(path)
+
+
+def test_requantize_chain_predict_matches_reference(tmp_path):
+    from compiler.codegen import lower_bias_add, lower_matmul, lower_requantize
+    from python.edge_npu.reference import bias_add, matmul_int8, requantize
+    from python.edge_npu.tensor import TensorSpec
+    rng = np.random.default_rng(6)
+    w = rng.integers(-128, 127, size=(8, 8), dtype=np.int8)
+    b = rng.integers(-100, 100, size=(8,), dtype=np.int32)
+    scale = 0.05
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="bias_add", inputs=("c", "b"), output="d"),
+             Node(op="requantize", inputs=("d",), output="q"))
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(8, 8)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 8)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "b": TensorSpec(name="b", dtype="int32", shape=(8,)),
+             "d": TensorSpec(name="d", dtype="int32", shape=(8, 8)),
+             "q": TensorSpec(name="q", dtype="int8", shape=(8, 8))}
+    cmds = (lower_matmul(nodes[0], specs, base=0x1000)
+            + lower_bias_add(nodes[1], specs, base=0x3000)
+            + lower_requantize(nodes[2], specs, base=0x5000, scale=scale)
+            + [Command(op="STORE", address=0x6000, size=64)])
+    path = str(tmp_path / "requant.bin")
+    write_model(path, Graph(nodes=nodes), {"w": w, "b": b}, cmds)
+    x = rng.integers(-128, 127, size=(8, 8), dtype=np.int8)
+    model = Device().load_model(path)
+    expected = requantize(bias_add(matmul_int8(x, w), b), scale)
+    np.testing.assert_array_equal(model.predict(x), expected)
+    assert model.predict(x).dtype == np.int8

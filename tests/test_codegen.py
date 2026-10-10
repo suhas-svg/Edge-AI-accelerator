@@ -143,3 +143,44 @@ def test_pool_shape_mismatch_rejected():
              "p": TensorSpec(name="p", dtype="int32", shape=(8, 3, 3))}
     with pytest.raises(ValueError):
         lower_max_pool(node, specs, base=0x4000, size=2, stride=2)
+
+
+def _requant_specs():
+    return {"c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+            "q": TensorSpec(name="q", dtype="int8", shape=(8, 8))}
+
+
+def test_lower_requantize():
+    import struct
+    from compiler.codegen import lower_requantize
+    node = Node(op="requantize", inputs=("c",), output="q")
+    cmds = lower_requantize(node, _requant_specs(), base=0x5000, scale=0.05)
+    assert len(cmds) == 1
+    c = cmds[0]
+    assert c.op == "REQUANTIZE" and c.address == 0x5000 and c.size == 64
+    assert struct.unpack("<f", struct.pack("<I", c.reserved))[0] == pytest.approx(0.05)
+    assert c.m == 128 and c.n == 0 and c.k == 0
+
+
+def test_requantize_bad_scale_rejected():
+    from compiler.codegen import lower_requantize
+    node = Node(op="requantize", inputs=("c",), output="q")
+    with pytest.raises(ValueError):
+        lower_requantize(node, _requant_specs(), base=0x5000, scale=0.0)
+
+
+def test_requantize_bad_zp_rejected():
+    from compiler.codegen import lower_requantize
+    node = Node(op="requantize", inputs=("c",), output="q")
+    with pytest.raises(ValueError):
+        lower_requantize(node, _requant_specs(), base=0x5000, scale=0.05,
+                         zero_point=200)
+
+
+def test_requantize_dtype_mismatch_rejected():
+    from compiler.codegen import lower_requantize
+    node = Node(op="requantize", inputs=("c",), output="q")
+    specs = {"c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "q": TensorSpec(name="q", dtype="int32", shape=(8, 8))}
+    with pytest.raises(ValueError):
+        lower_requantize(node, specs, base=0x5000, scale=0.05)

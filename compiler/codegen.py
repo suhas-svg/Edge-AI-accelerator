@@ -147,3 +147,36 @@ def lower_max_pool(node: Node, specs: dict[str, TensorSpec], base: int,
         raise ValueError(f"pool output shape {y.shape} != ({c}, {oh}, {ow})")
     return [Command(op="MAX_POOL", address=base,
                     size=_numel(y.shape) * _DTYPE_BYTES[y.dtype], m=size, n=stride)]
+
+
+def lower_requantize(node: Node, specs: dict[str, TensorSpec], base: int,
+                     scale: float, zero_point: int = 0) -> list[Command]:
+    """INT32 accumulator → INT8. Scale rides as f32 bits in reserved, zp+128 in m."""
+    import struct
+    if node.op != "requantize":
+        raise ValueError(f"lower_requantize needs a requantize node, got {node.op!r}")
+    if len(node.inputs) != 1:
+        raise ValueError(f"requantize needs 1 input, got {len(node.inputs)}")
+    for name in (*node.inputs, node.output):
+        if name not in specs:
+            raise ValueError(f"unknown tensor {name!r}")
+    if not scale > 0:
+        raise ValueError(f"requantize scale must be positive, got {scale}")
+    if not -128 <= zero_point <= 127:
+        raise ValueError(f"zero_point {zero_point} outside INT8 range")
+    acc, out = specs[node.inputs[0]], specs[node.output]
+    if acc.dtype != "int32":
+        raise ValueError(f"requantize input must be int32, got {acc.dtype}")
+    if out.dtype != "int8":
+        raise ValueError(f"requantize output must be int8, got {out.dtype}")
+    if acc.shape != out.shape:
+        raise ValueError(f"requantize shape {acc.shape} != output {out.shape}")
+    if _numel(out.shape) % (TILE * TILE) != 0:
+        raise ValueError(
+            f"tensor {out.name!r} has {_numel(out.shape)} elements, "
+            f"not a multiple of {TILE * TILE}"
+        )
+    (scale_bits,) = struct.unpack("<I", struct.pack("<f", scale))
+    return [Command(op="REQUANTIZE", address=base,
+                    size=_numel(out.shape) * _DTYPE_BYTES[out.dtype],
+                    reserved=scale_bits, m=zero_point + 128)]
