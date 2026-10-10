@@ -25,4 +25,5 @@ fi
 gcc -c runtime/src/edge_npu.c -o build/edge_npu_check.o -I runtime/include -Wall
 gcc runtime/tests/test_runtime.c runtime/src/edge_npu.c -o build/runtime_check -I runtime/include -Wall
 ./build/runtime_check
+.venv/Scripts/python.exe demo/demo_inference.py > /dev/null
 echo "check ok"
