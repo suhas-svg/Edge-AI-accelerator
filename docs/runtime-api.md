@@ -21,6 +21,15 @@ Lifecycle: `enpu_open` → `enpu_load_model` → alloc/run → `enpu_free_buffer
 Error codes: `ENPU_OK = 0`, `ENPU_ERR_ARG = -1`, `ENPU_ERR_NOMEM = -2`,
 `ENPU_ERR_IO = -3`, `ENPU_ERR_VERSION = -4`.
 
+## C++ API (`runtime/include/edge_npu_cpp.h`)
+
+RAII over the C API, compiled from `runtime/src/edge_npu_cpp.cpp`
+(`g++ -std=c++14`). `enpu::Device` opens on construction, `enpu::Model`
+loads and validates on construction, `enpu::Buffer` frees on destruction
+and is move-only. Every method throws `enpu::Error` (a `std::runtime_error`
+carrying the `ENPU_*` code) on failure; `run_matmul` returns the cycle
+count.
+
 ## Python SDK (`python/edge_npu/sdk.py`)
 
 ```python
@@ -44,5 +53,6 @@ bench = device.benchmark(model, x)  # median ms
 
 ## Test that pins it
 
-`runtime/tests/test_runtime.c` (compiled and run by `scripts/check.sh`),
+`runtime/tests/test_runtime.c` and `runtime/tests/test_runtime_cpp.cpp`
+(both compiled and run by `scripts/check.sh`),
 `tests/test_sdk.py` (chain execution, stats, every rejection).
