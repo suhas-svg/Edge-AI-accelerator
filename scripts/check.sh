@@ -23,4 +23,6 @@ if .venv/Scripts/python.exe tools/verify_rtl.py build/selfcheck; then
   echo "FAIL: harness did not catch a corrupted vector" >&2; exit 1
 fi
 gcc -c runtime/src/edge_npu.c -o build/edge_npu_check.o -I runtime/include -Wall
+gcc runtime/tests/test_runtime.c runtime/src/edge_npu.c -o build/runtime_check -I runtime/include -Wall
+./build/runtime_check
 echo "check ok"
