@@ -41,6 +41,14 @@ Device::Device() {
     throw_on_error(enpu_open(&dev_));
 }
 
+void Device::open() {
+    throw_on_error(enpu_open(&dev_));
+}
+
+void Device::reset() {
+    throw_on_error(enpu_reset(&dev_));
+}
+
 Buffer Device::alloc_buffer(size_t size) {
     Buffer buf;
     throw_on_error(enpu_alloc_buffer(&dev_, size, buf.get()));

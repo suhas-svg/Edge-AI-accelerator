@@ -20,6 +20,7 @@ enum {
 };
 
 int enpu_open(enpu_device_t *dev);
+int enpu_reset(enpu_device_t *dev);
 int enpu_load_model(enpu_device_t *dev, const char *path, enpu_model_t *model);
 int enpu_matmul_i8(const int8_t *a, const int8_t *b, int32_t *c, int m, int n, int k);
 int enpu_cycles_for_matmul(int m, int n, int k, uint32_t *cycles);

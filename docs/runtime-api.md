@@ -6,10 +6,14 @@ against the simulator until FPGA exists.
 ## C API (`runtime/include/edge_npu.h`)
 
 Lifecycle: `enpu_open` → `enpu_load_model` → alloc/run → `enpu_free_buffer`.
+`enpu_reset` tears the device down (later calls fail ARG until `enpu_open`
+runs again); already-allocated buffers and loaded model structs keep their
+bytes.
 
 | Function | Behavior |
 |---|---|
 | `enpu_open(dev)` | marks device present; ARG on null |
+| `enpu_reset(dev)` | clears present; ARG on null or dead device |
 | `enpu_load_model(dev, path, model)` | validates model.bin header magic + version; IO on file errors, VERSION on mismatch |
 | `enpu_alloc_buffer(dev, size, buf)` | zeroed buffer; ARG on zero size or dead device, NOMEM on failure |
 | `enpu_free_buffer(buf)` | null-safe, double-free-safe, clears the struct |
@@ -28,7 +32,7 @@ RAII over the C API, compiled from `runtime/src/edge_npu_cpp.cpp`
 loads and validates on construction, `enpu::Buffer` frees on destruction
 and is move-only. Every method throws `enpu::Error` (a `std::runtime_error`
 carrying the `ENPU_*` code) on failure; `run_matmul` returns the cycle
-count.
+count. `reset()` tears down (use throws until `open()` runs again).
 
 ## Python SDK (`python/edge_npu/sdk.py`)
 
@@ -50,6 +54,9 @@ bench = device.benchmark(model, x)  # median ms
 - Elementwise/pool/requantize steps cost zero modeled cycles.
 - Cycles count executed (padded) MACs; `predict` trims to the logical
   shape, so numerics match the logical reference bit-exact.
+- `reset()` closes the device (`load_model`, `benchmark`, `info`,
+  `get_stats` raise until `open()`); already-loaded models carry their
+  own data and keep predicting.
 
 ## Test that pins it
 

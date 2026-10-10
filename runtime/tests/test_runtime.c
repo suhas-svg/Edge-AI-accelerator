@@ -69,6 +69,18 @@ int main(void) {
     enpu_free_buffer(&ba);
     enpu_free_buffer(0);
 
+    assert(enpu_reset(0) == ENPU_ERR_ARG);
+    assert(enpu_reset(&dead) == ENPU_ERR_ARG);
+    assert(enpu_reset(&dev) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 64, &bb) == ENPU_ERR_ARG);
+    assert(enpu_load_model(&dev, "build/t_good.bin", &m) == ENPU_ERR_ARG);
+    assert(enpu_run_matmul(&dev, &ba, &bb, &bc, 8, 8, 8, &rc) == ENPU_ERR_ARG);
+    assert(enpu_open(&dev) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 64, &bb) == ENPU_OK);
+    enpu_free_buffer(&bb);
+    assert(enpu_reset(&dev) == ENPU_OK);
+    assert(enpu_reset(&dev) == ENPU_ERR_ARG);
+
     printf("runtime tests ok\n");
     return 0;
 }
