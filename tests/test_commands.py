@@ -13,3 +13,9 @@ def test_roundtrip_matmul_sequence():
 def test_bad_magic_raises():
     with pytest.raises(ValueError):
         decode_commands(b"\x00\x00\x01\x00" + b"\x00" * 16)
+
+
+def test_roundtrip_elementwise_v02():
+    cmds = [Command(op="RELU", address=0x3000, size=16384),
+            Command(op="BIAS_ADD", address=0x3000, size=16384)]
+    assert decode_commands(encode_commands(cmds)) == cmds

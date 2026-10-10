@@ -16,14 +16,16 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from compiler.binary import write_model
-from compiler.codegen import lower_matmul
+from compiler.codegen import lower_bias_add, lower_matmul, lower_relu
 from compiler.graph import Graph, Node
 from python.edge_npu.commands import Command  # noqa: F401  (re-export check)
 from python.edge_npu.reference import (
+    bias_add,
     dequantize_int8,
     matmul_int8,
     quantization_error,
     quantize_int8,
+    relu,
 )
 from python.edge_npu.sdk import Device
 from python.edge_npu.tensor import TensorSpec
@@ -87,6 +89,46 @@ def main() -> None:
     print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
     print(f"║ MAC util:     {stats['mac_utilization'] * 100:>7.1f} %           ║")
     print(f"║ Quant err:    {qerr:>8.4f}               ║")
+    print(f"║ Correctness:  max diff {diff} (exact)      ║")
+    print("╚══════════════════════════════════════╝")
+
+    _demo_chain(rng)
+
+
+def _demo_chain(rng: np.random.Generator) -> None:
+    """v0.2 chain: matmul → relu → bias_add, bit-exact vs reference."""
+    brng = np.random.default_rng(SEED + 1)
+    b = brng.integers(-100, 100, size=(SIZE,), dtype=np.int32)
+    aq = quantize_int8(rng.standard_normal((SIZE, SIZE)).astype(np.float32), SCALE)
+    w = quantize_int8(rng.standard_normal((SIZE, SIZE)).astype(np.float32), SCALE)
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="relu", inputs=("c",), output="r"),
+             Node(op="bias_add", inputs=("r", "b"), output="y"))
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(SIZE, SIZE)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(SIZE, SIZE)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(SIZE, SIZE)),
+             "r": TensorSpec(name="r", dtype="int32", shape=(SIZE, SIZE)),
+             "b": TensorSpec(name="b", dtype="int32", shape=(SIZE,)),
+             "y": TensorSpec(name="y", dtype="int32", shape=(SIZE, SIZE))}
+    cmds = (lower_matmul(nodes[0], specs, base=0x1000)
+            + lower_relu(nodes[1], specs, base=0x3000)
+            + lower_bias_add(nodes[2], specs, base=0x3000))
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "chain.bin")
+        write_model(path, Graph(nodes=nodes), {"w": w, "b": b}, cmds)
+        model = Device().load_model(path)
+        out = model.predict(aq)
+        stats = model.get_stats()
+    expected = bias_add(relu(matmul_int8(aq, w)), b)
+    diff = int(np.max(np.abs(out.astype(np.int64) - expected.astype(np.int64))))
+    assert diff == 0, f"chain diverged from reference by {diff}"
+
+    print()
+    print("╔══════════════════════════════════════╗")
+    print("║        EdgeNPU Chain (v0.2)          ║")
+    print("╠══════════════════════════════════════╣")
+    print("║ matmul → relu → bias_add, 64x64      ║")
+    print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
     print(f"║ Correctness:  max diff {diff} (exact)      ║")
     print("╚══════════════════════════════════════╝")
 
