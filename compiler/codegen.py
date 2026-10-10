@@ -15,7 +15,8 @@ def _numel(shape: tuple[int, ...]) -> int:
     return math.prod(shape)
 
 
-def lower_matmul(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Command]:
+def check_matmul(node: Node, specs: dict[str, TensorSpec]) -> tuple[int, int, int, int, int, int]:
+    """Validate a matmul node; return (m, n, k, a_bytes, w_bytes, c_bytes)."""
     if node.op != "matmul":
         raise ValueError(f"lower_matmul needs a matmul node, got {node.op!r}")
     if len(node.inputs) != 2:
@@ -42,12 +43,24 @@ def lower_matmul(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Co
     a_bytes = m * k * _DTYPE_BYTES[a.dtype]
     w_bytes = k * n * _DTYPE_BYTES[w.dtype]
     c_bytes = m * n * _DTYPE_BYTES[c.dtype]
+    return m, n, k, a_bytes, w_bytes, c_bytes
+
+
+def emit_matmul(node: Node, specs: dict[str, TensorSpec],
+                a_addr: int, w_addr: int, c_addr: int) -> list[Command]:
+    """LOAD/LOAD/MATMUL/STORE at explicit addresses."""
+    m, n, k, a_bytes, w_bytes, c_bytes = check_matmul(node, specs)
     return [
-        Command(op="LOAD", address=base, size=a_bytes),
-        Command(op="LOAD", address=base + a_bytes, size=w_bytes),
+        Command(op="LOAD", address=a_addr, size=a_bytes),
+        Command(op="LOAD", address=w_addr, size=w_bytes),
         Command(op="MATMUL", m=m, n=n, k=k),
-        Command(op="STORE", address=base + a_bytes + w_bytes, size=c_bytes),
+        Command(op="STORE", address=c_addr, size=c_bytes),
     ]
+
+
+def lower_matmul(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Command]:
+    _, _, _, a_bytes, w_bytes, _ = check_matmul(node, specs)
+    return emit_matmul(node, specs, base, base + a_bytes, base + a_bytes + w_bytes)
 
 
 def _check_elementwise(node: Node, specs: dict[str, TensorSpec], arity: int) -> TensorSpec:

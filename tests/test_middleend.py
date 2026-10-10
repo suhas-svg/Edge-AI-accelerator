@@ -1,8 +1,15 @@
+import struct
+
 import numpy as np
 import pytest
 
+from compiler.binary import write_model
+from compiler.codegen import emit_matmul, lower_matmul
 from compiler.graph import Graph, Node
-from compiler.middleend import optimize, schedule, validate
+from compiler.middleend import lower_graph, optimize, schedule, validate
+from python.edge_npu.commands import Command
+from python.edge_npu.reference import bias_add, matmul_int8, relu, requantize
+from python.edge_npu.sdk import Device
 from python.edge_npu.tensor import TensorSpec
 
 
@@ -126,3 +133,106 @@ def test_unsupported_op_rejected():
 def test_empty_graph_rejected():
     with pytest.raises(ValueError, match="0"):
         validate(schedule(Graph(nodes=()), {}))
+
+
+def _chain_graph():
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="relu", inputs=("c",), output="r"),
+             Node(op="bias_add", inputs=("r", "b"), output="d"),
+             Node(op="requantize", inputs=("d",), output="q"))
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(8, 8)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 8)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "r": TensorSpec(name="r", dtype="int32", shape=(8, 8)),
+             "b": TensorSpec(name="b", dtype="int32", shape=(8,)),
+             "d": TensorSpec(name="d", dtype="int32", shape=(8, 8)),
+             "q": TensorSpec(name="q", dtype="int8", shape=(8, 8), scale=0.02)}
+    return nodes, specs
+
+
+def test_emit_matmul_matches_lower_matmul():
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(64, 64)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(64, 64)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(64, 64))}
+    assert emit_matmul(node, specs, 0x1000, 0x2000, 0x3000) == \
+        lower_matmul(node, specs, base=0x1000)
+
+
+def test_lower_graph_matmul_stream_equals_lower_matmul():
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(64, 64)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(64, 64)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(64, 64))}
+    lg = lower_graph(Graph(nodes=(node,)), specs,
+                     {"w": np.ones((64, 64), dtype=np.int8)}, {})
+    assert lg.cmds == lower_matmul(node, specs, base=0x1000)
+    assert lg.graph == Graph(nodes=(node,))
+
+
+def test_lower_graph_chain_exact_stream():
+    nodes, specs = _chain_graph()
+    lg = lower_graph(Graph(nodes=nodes), specs,
+                     {"w": np.ones((8, 8), dtype=np.int8),
+                      "b": np.zeros((8,), dtype=np.int32)}, {})
+    scale_bits = struct.unpack("<I", struct.pack("<f", 0.02))[0]
+    assert lg.cmds == [
+        Command(op="LOAD", address=0x1000, size=64),
+        Command(op="LOAD", address=0x1040, size=64),
+        Command(op="MATMUL", m=8, n=8, k=8),
+        Command(op="STORE", address=0x1080, size=256),
+        Command(op="RELU", address=0x1080, size=256),
+        Command(op="BIAS_ADD", address=0x1080, size=256),
+        Command(op="REQUANTIZE", address=0x1000, size=64, reserved=scale_bits, m=128),
+        Command(op="STORE", address=0x1000, size=64),
+    ]
+
+
+def test_lower_graph_pool_requires_attrs():
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="max_pool", inputs=("c",), output="p"))
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(8, 8)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 8)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "p": TensorSpec(name="p", dtype="int32", shape=(8, 4, 4))}
+    with pytest.raises(ValueError, match="'p'"):
+        lower_graph(Graph(nodes=nodes), specs,
+                    {"w": np.ones((8, 8), dtype=np.int8)}, {})
+
+
+def test_lower_graph_pool_uses_attrs():
+    nodes = (Node(op="conv2d", inputs=("x", "w"), output="c"),
+             Node(op="max_pool", inputs=("c",), output="p"))
+    specs = {"x": TensorSpec(name="x", dtype="int8", shape=(8, 10, 10)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 8, 3, 3)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 8, 8)),
+             "p": TensorSpec(name="p", dtype="int32", shape=(8, 4, 4))}
+    lg = lower_graph(Graph(nodes=nodes), specs,
+                     {"w": np.ones((8, 8, 3, 3), dtype=np.int8)},
+                     {"p": {"size": 2, "stride": 2}})
+    assert lg.cmds == [
+        Command(op="LOAD", address=0x1000, size=800),
+        Command(op="LOAD", address=0x1340, size=576),
+        Command(op="CONV2D", address=0x1580, size=2048, m=8, n=8, k=8),
+        Command(op="MAX_POOL", address=0x1000, size=512, m=2, n=2),
+        Command(op="STORE", address=0x1000, size=512),
+    ]
+
+
+def test_lower_graph_end_to_end_matches_reference(tmp_path):
+    nodes, specs = _chain_graph()
+    rng = np.random.default_rng(11)
+    w = rng.integers(-128, 127, size=(8, 8), dtype=np.int8)
+    b = rng.integers(-100, 100, size=(8,), dtype=np.int32)
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w": w, "b": b}, {})
+    path = str(tmp_path / "chain.bin")
+    write_model(path, lg.graph, lg.weights, lg.cmds)
+    x = rng.integers(-128, 127, size=(8, 8), dtype=np.int8)
+    out = Device().load_model(path).predict(x)
+    expected = requantize(bias_add(relu(matmul_int8(x, w)), b), 0.02)
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_lower_graph_empty_rejected():
+    with pytest.raises(ValueError, match="0"):
+        lower_graph(Graph(nodes=()), {}, {}, {})
