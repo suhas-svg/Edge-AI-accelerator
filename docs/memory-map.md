@@ -48,9 +48,16 @@ the last one is checked against the result.
 
 ## Alignment discipline
 
+Tile multiples are guaranteed by middle-end legalization (`legalize` pads
+odd dims to multiples of 8 and the SDK trims to the logical shape at the
+model boundary), so every emitted command is tile-aligned:
+
 - MATMUL dims m/n/k: each divisible by 8.
 - CONV2D dims K/C/OH/OW: each divisible by 8.
 - Elementwise/pool/requantize: total elements divisible by 64.
+- The per-op lowering checks for the above stay in place as backstop and
+  still reject unlegalized odd dims with named errors.
+- Peak and budget are measured on padded bytes.
 - The C runner (`enpu_run_matmul`) additionally requires buffers sized to
   at least m·k, k·n, and m·n·4 bytes respectively.
 

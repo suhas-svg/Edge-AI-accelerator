@@ -39,6 +39,8 @@ bench = device.benchmark(model, x)  # median ms
 - `memory_bandwidth_gbs` is 0.0 until a clock assumption exists — reported,
   not invented.
 - Elementwise/pool/requantize steps cost zero modeled cycles.
+- Cycles count executed (padded) MACs; `predict` trims to the logical
+  shape, so numerics match the logical reference bit-exact.
 
 ## Test that pins it
 
