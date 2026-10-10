@@ -55,6 +55,11 @@ class Model:
         self._chain = self._validate_chain(list(self.pack.graph.nodes))
         self._cycles = 0
         self._macs = 0
+        self._dma_bytes = sum(c.size for c in self.pack.cmds
+                              if c.op in ("LOAD", "STORE"))
+        self._cmd_counts: dict[str, int] = {}
+        for c in self.pack.cmds:
+            self._cmd_counts[c.op] = self._cmd_counts.get(c.op, 0) + 1
 
     @staticmethod
     def _validate_chain(nodes: list) -> list:
@@ -171,7 +176,9 @@ class Model:
     def get_stats(self) -> dict:
         util = self._macs / (self._cycles * MACS_PER_CYCLE) if self._cycles else 0.0
         return {"cycles": self._cycles, "mac_utilization": util,
-                "memory_bandwidth_gbs": 0.0}
+                "memory_bandwidth_gbs": 0.0, "busy_cycles": self._cycles,
+                "idle_cycles": 0, "dma_bytes": self._dma_bytes,
+                "command_counts": dict(self._cmd_counts)}
 
 
 class Device:
