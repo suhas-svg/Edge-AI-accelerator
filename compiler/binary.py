@@ -146,5 +146,8 @@ def read_model(path: str) -> ModelPack:
         off += ol
         nodes.append(Node(op=op, inputs=tuple(inputs), output=output))
     _need(buf, off, cmd_len, "command stream")
-    cmds = decode_commands(buf[off:off + cmd_len])
+    try:
+        cmds = decode_commands(buf[off:off + cmd_len])
+    except struct.error as e:
+        raise ValueError(f"model.bin truncated in command stream: {e}")
     return ModelPack(version=version, graph=Graph(nodes=tuple(nodes)), weights=weights, cmds=cmds)

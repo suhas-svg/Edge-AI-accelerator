@@ -26,3 +26,28 @@ def test_odd_dim_rejected():
              "c": TensorSpec(name="c", dtype="int32", shape=(60, 64))}
     with pytest.raises(ValueError):
         lower_matmul(node, specs, base=0x1000)
+
+
+def test_non_matmul_op_rejected():
+    node = Node(op="relu", inputs=("c",), output="y")
+    specs = {"c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "y": TensorSpec(name="y", dtype="int32", shape=(8, 8))}
+    with pytest.raises(ValueError):
+        lower_matmul(node, specs, base=0x1000)
+
+
+def test_output_shape_mismatch_rejected():
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(8, 8)),
+             "w": TensorSpec(name="w", dtype="int8", shape=(8, 8)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(16, 16))}
+    with pytest.raises(ValueError):
+        lower_matmul(node, specs, base=0x1000)
+
+
+def test_missing_tensor_raises_value_error():
+    node = Node(op="matmul", inputs=("a", "w"), output="c")
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(8, 8)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(8, 8))}
+    with pytest.raises(ValueError):
+        lower_matmul(node, specs, base=0x1000)
