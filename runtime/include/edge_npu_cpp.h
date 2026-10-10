@@ -39,6 +39,8 @@ private:
 class Device {
 public:
     Device();
+    void open();
+    void reset();
     Buffer alloc_buffer(size_t size);
     uint32_t run_matmul(const Buffer &a, const Buffer &b, Buffer &c,
                         int m, int n, int k);

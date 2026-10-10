@@ -18,6 +18,12 @@ int enpu_open(enpu_device_t *dev) {
     return ENPU_OK;
 }
 
+int enpu_reset(enpu_device_t *dev) {
+    if (!dev_live(dev)) return ENPU_ERR_ARG;
+    dev->present = 0;
+    return ENPU_OK;
+}
+
 int enpu_load_model(enpu_device_t *dev, const char *path, enpu_model_t *model) {
     if (!dev_live(dev) || !path || !model) return ENPU_ERR_ARG;
     FILE *f = fopen(path, "rb");

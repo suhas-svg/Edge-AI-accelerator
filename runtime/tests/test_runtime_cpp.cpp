@@ -69,6 +69,16 @@ int main(void) {
     assert(ba.data() == 0 && ba.size() == 0);
     assert(moved.size() == 64);
 
+    dev.reset();
+    expect_code([&] { dev.alloc_buffer(64); }, ENPU_ERR_ARG);
+    expect_code([&] { dev.load_model("build/cpp_good.bin"); }, ENPU_ERR_ARG);
+    expect_code([&] { dev.reset(); }, ENPU_ERR_ARG);
+    dev.open();
+    enpu::Buffer reopened = dev.alloc_buffer(64);
+    assert(reopened.size() == 64);
+    enpu::Model m2 = dev.load_model("build/cpp_good.bin");
+    assert(m2.version() == 1);
+
     printf("runtime cpp tests ok\n");
     return 0;
 }

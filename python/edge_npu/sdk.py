@@ -175,16 +175,34 @@ class Model:
 
 
 class Device:
+    def __init__(self) -> None:
+        self._open = True
+
+    def _require_open(self) -> None:
+        if not self._open:
+            raise ValueError("device is closed after reset; call open() first")
+
+    def open(self) -> None:
+        self._open = True
+
+    def reset(self) -> None:
+        self._require_open()
+        self._open = False
+
     def load_model(self, path: str) -> Model:
+        self._require_open()
         return Model(path)
 
     def info(self) -> dict:
+        self._require_open()
         return {"device": "edge-npu-sim", "precision": "int8", "mac_array": "8x8"}
 
     def get_stats(self) -> dict:
+        self._require_open()
         return {"cycles": 0, "mac_utilization": 0.0, "memory_bandwidth_gbs": 0.0}
 
     def benchmark(self, model: Model, x: np.ndarray, repeats: int = 5) -> dict:
+        self._require_open()
         for _ in range(2):
             model.predict(x)
         samples = []
