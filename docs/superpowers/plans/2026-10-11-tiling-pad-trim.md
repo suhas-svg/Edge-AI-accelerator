@@ -117,9 +117,9 @@ def test_legalize_elementwise_inherits_padded_shape():
 def test_legalize_pads_bias_to_padded_last_dim():
     nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
              Node(op="bias_add", inputs=("c", "b"), output="d")))
-    specs = dict(_mm_specs((60, 60), (60, 64), (60, 64)),
+    specs = dict(_mm_specs((60, 60), (60, 60), (60, 60)),
                  b=TensorSpec(name="b", dtype="int32", shape=(60,)),
-                 d=TensorSpec(name="d", dtype="int32", shape=(60, 64)))
+                 d=TensorSpec(name="d", dtype="int32", shape=(60, 60)))
     got = legalize(_order(nodes, specs), specs, {})
     assert got["d"].shape == (64, 64)
     assert got["b"].shape == (64,)
