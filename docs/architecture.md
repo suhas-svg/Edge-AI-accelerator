@@ -14,10 +14,11 @@ FP32 Graph + weights + specs
   │  compiler/quantize.py — symmetric per-tensor INT8, calibration scales
   ▼
 INT8 Graph + weights + specs
-  │  compiler/codegen.py — lower to command stream
-  │  compiler/binary.py — pack model.bin (format v0.1)
+  │  compiler/middleend.py — schedule, optimize, validate, memory plan,
+  │                           then lower to the command stream
   ▼
 model.bin
+  │  compiler/binary.py — pack model.bin (format v0.1)
   │  python/edge_npu/sdk.py — load, chain execution, stats
   │  simulator/hardware_model.py — numerics + cycle model
   ▼
