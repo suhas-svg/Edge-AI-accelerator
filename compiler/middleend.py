@@ -73,3 +73,25 @@ def optimize(graph: Graph,
         referenced.update(n.inputs)
     pruned = {k: v for k, v in weights.items() if k in referenced}
     return Graph(nodes=tuple(nodes)), pruned
+
+
+_LOWERED_OPS = ("matmul", "conv2d", "relu", "bias_add", "max_pool", "requantize")
+
+
+def validate(order: list[Node]) -> None:
+    """Chain legality for lowering: no fan-out, one sink, supported ops."""
+    produced = {n.output for n in order}
+    consumers: dict[str, int] = {name: 0 for name in produced}
+    for node in order:
+        for inp in node.inputs:
+            if inp in consumers:
+                consumers[inp] += 1
+    for name, count in consumers.items():
+        if count > 1:
+            raise ValueError(f"tensor {name!r} feeds {count} nodes (fan-out)")
+    sinks = [n.output for n in order if consumers[n.output] == 0]
+    if len(sinks) != 1:
+        raise ValueError(f"graph must have a single output; found {len(sinks)}")
+    for node in order:
+        if node.op not in _LOWERED_OPS:
+            raise ValueError(f"no lowering for op {node.op!r}")

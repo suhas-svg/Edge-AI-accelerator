@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from compiler.graph import Graph, Node
-from compiler.middleend import optimize, schedule
+from compiler.middleend import optimize, schedule, validate
 from python.edge_npu.tensor import TensorSpec
 
 
@@ -88,3 +88,41 @@ def test_optimize_fixed_point():
     once, w1 = optimize(g, w)
     twice, w2 = optimize(once, w1)
     assert twice == once and w2.keys() == w1.keys()
+
+
+def test_fanout_rejected():
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="relu", inputs=("c",), output="r"),
+             Node(op="bias_add", inputs=("c", "b"), output="d"))
+    specs = _specs("a", "w", "c", "r", "b", "d")
+    order = schedule(Graph(nodes=nodes), specs)
+    with pytest.raises(ValueError, match="'c'"):
+        validate(order)
+
+
+def test_shared_weight_is_not_fanout():
+    nodes = (Node(op="matmul", inputs=("a", "w"), output="c"),
+             Node(op="bias_add", inputs=("c", "b"), output="d"),
+             Node(op="bias_add", inputs=("d", "b"), output="e"))
+    specs = _specs("a", "w", "c", "b", "d", "e")
+    validate(schedule(Graph(nodes=nodes), specs))  # must not raise
+
+
+def test_two_sinks_rejected():
+    nodes = (Node(op="relu", inputs=("x",), output="r1"),
+             Node(op="relu", inputs=("y",), output="r2"))
+    specs = _specs("x", "r1", "y", "r2")
+    with pytest.raises(ValueError, match="2"):
+        validate(schedule(Graph(nodes=nodes), specs))
+
+
+def test_unsupported_op_rejected():
+    nodes = (Node(op="load", inputs=("x",), output="l"),)
+    specs = _specs("x", "l")
+    with pytest.raises(ValueError, match="load"):
+        validate(schedule(Graph(nodes=nodes), specs))
+
+
+def test_empty_graph_rejected():
+    with pytest.raises(ValueError, match="0"):
+        validate(schedule(Graph(nodes=()), {}))
