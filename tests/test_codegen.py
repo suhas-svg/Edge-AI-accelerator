@@ -51,3 +51,43 @@ def test_missing_tensor_raises_value_error():
              "c": TensorSpec(name="c", dtype="int32", shape=(8, 8))}
     with pytest.raises(ValueError):
         lower_matmul(node, specs, base=0x1000)
+
+
+def test_lower_relu():
+    from compiler.codegen import lower_relu
+    node = Node(op="relu", inputs=("c",), output="y")
+    specs = {"c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "y": TensorSpec(name="y", dtype="int32", shape=(8, 8))}
+    assert lower_relu(node, specs, base=0x3000) == [
+        Command(op="RELU", address=0x3000, size=256),
+    ]
+
+
+def test_lower_bias_add():
+    from compiler.codegen import lower_bias_add
+    node = Node(op="bias_add", inputs=("c", "b"), output="y")
+    specs = {"c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "b": TensorSpec(name="b", dtype="int32", shape=(8,)),
+             "y": TensorSpec(name="y", dtype="int32", shape=(8, 8))}
+    assert lower_bias_add(node, specs, base=0x3000) == [
+        Command(op="BIAS_ADD", address=0x3000, size=256),
+    ]
+
+
+def test_relu_odd_elements_rejected():
+    from compiler.codegen import lower_relu
+    node = Node(op="relu", inputs=("c",), output="y")
+    specs = {"c": TensorSpec(name="c", dtype="int32", shape=(7, 8)),
+             "y": TensorSpec(name="y", dtype="int32", shape=(7, 8))}
+    with pytest.raises(ValueError):
+        lower_relu(node, specs, base=0x3000)
+
+
+def test_bias_incompatible_shape_rejected():
+    from compiler.codegen import lower_bias_add
+    node = Node(op="bias_add", inputs=("c", "b"), output="y")
+    specs = {"c": TensorSpec(name="c", dtype="int32", shape=(8, 8)),
+             "b": TensorSpec(name="b", dtype="int32", shape=(7,)),
+             "y": TensorSpec(name="y", dtype="int32", shape=(8, 8))}
+    with pytest.raises(ValueError):
+        lower_bias_add(node, specs, base=0x3000)

@@ -6,6 +6,7 @@ import time
 import numpy as np
 
 from compiler.binary import ModelPack, read_model
+from python.edge_npu.reference import bias_add, relu
 from simulator.hardware_model import MACS_PER_CYCLE, run_matmul
 
 
@@ -16,20 +17,33 @@ class Model:
             self.pack: ModelPack = read_model(path)
         except (ValueError, OSError) as e:
             raise ValueError(f"cannot load model {path!r}: {e}")
-        nodes = [n for n in self.pack.graph.nodes if n.op == "matmul"]
-        if len(nodes) != 1 or len(self.pack.graph.nodes) != 1:
-            raise ValueError(
-                f"SDK executes a single matmul graph, got {[n.op for n in self.pack.graph.nodes]}"
-            )
-        self._node = nodes[0]
+        self._chain = self._validate_chain(list(self.pack.graph.nodes))
         self._cycles = 0
         self._macs = 0
 
+    @staticmethod
+    def _validate_chain(nodes: list) -> list:
+        ops = [n.op for n in nodes]
+        if not ops or ops[0] != "matmul":
+            raise ValueError(f"SDK chain must start with matmul, got {ops}")
+        for op in ops[1:]:
+            if op not in ("relu", "bias_add"):
+                raise ValueError(f"SDK chain supports matmul→relu→bias_add, got {ops}")
+        prev = nodes[0].output
+        for node in nodes[1:]:
+            if node.inputs[0] != prev:
+                raise ValueError(
+                    f"node {node.op} reads {node.inputs[0]!r}, chain holds {prev!r}"
+                )
+            prev = node.output
+        return ops
+
     def predict(self, x: np.ndarray) -> np.ndarray:
-        node = self._node
-        if node.inputs[1] not in self.pack.weights:
-            raise ValueError(f"model missing weights for {node.inputs[1]!r}")
-        w = self.pack.weights[node.inputs[1]]
+        nodes = self.pack.graph.nodes
+        mm = nodes[0]
+        if mm.inputs[1] not in self.pack.weights:
+            raise ValueError(f"model missing weights for {mm.inputs[1]!r}")
+        w = self.pack.weights[mm.inputs[1]]
         a = np.ascontiguousarray(x, dtype=np.int8)
         m, k = a.shape
         kb, n = w.shape
@@ -39,15 +53,40 @@ class Model:
         if len(matmuls) != 1 or (matmuls[0].m, matmuls[0].n, matmuls[0].k) != (m, n, k):
             raise ValueError("command stream MATMUL does not match graph shapes")
         loads = [c for c in self.pack.cmds if c.op == "LOAD"]
-        stores = [c for c in self.pack.cmds if c.op == "STORE"]
         if [c.size for c in loads] != [a.nbytes, w.nbytes]:
             raise ValueError("command stream LOAD sizes do not match tensor bytes")
-        out, cycles = run_matmul(a, w)
-        if [c.size for c in stores] != [out.nbytes]:
+        buf, cycles = run_matmul(a, w)
+        prev = mm.output
+        # Elementwise cycles are not modeled yet; the MAC count stands.
+        ew = [c for c in self.pack.cmds if c.op in ("RELU", "BIAS_ADD")]
+        ei = 0
+        for node in nodes[1:]:
+            if node.inputs[0] != prev:
+                raise ValueError(
+                    f"node {node.op} reads {node.inputs[0]!r}, chain holds {prev!r}"
+                )
+            if ei >= len(ew) or ew[ei].op != node.op.upper():
+                raise ValueError(f"command stream missing {node.op} for chain step")
+            if ew[ei].size != buf.nbytes:
+                raise ValueError(
+                    f"command stream {ew[ei].op} size does not match buffer bytes"
+                )
+            ei += 1
+            if node.op == "relu":
+                buf = relu(buf)
+            else:
+                if node.inputs[1] not in self.pack.weights:
+                    raise ValueError(f"model missing weights for {node.inputs[1]!r}")
+                buf = bias_add(buf, self.pack.weights[node.inputs[1]])
+            prev = node.output
+        if ei != len(ew):
+            raise ValueError("command stream has extra elementwise commands")
+        stores = [c for c in self.pack.cmds if c.op == "STORE"]
+        if [c.size for c in stores] != [buf.nbytes]:
             raise ValueError("command stream STORE size does not match output bytes")
         self._cycles = cycles
         self._macs = m * n * k
-        return out
+        return buf
 
     def get_stats(self) -> dict:
         util = self._macs / (self._cycles * MACS_PER_CYCLE) if self._cycles else 0.0
