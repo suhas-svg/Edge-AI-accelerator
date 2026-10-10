@@ -40,7 +40,8 @@ count. `reset()` tears down (use throws until `open()` runs again).
 device = Device()
 model = device.load_model("model.bin")
 result = model.predict(x)
-stats = model.get_stats()   # cycles, mac_utilization, memory_bandwidth_gbs
+stats = model.get_stats()   # cycles, mac_utilization, memory_bandwidth_gbs,
+                            # busy_cycles, idle_cycles, dma_bytes, command_counts
 bench = device.benchmark(model, x)  # median ms
 ```
 
@@ -52,6 +53,9 @@ bench = device.benchmark(model, x)  # median ms
 - `memory_bandwidth_gbs` is 0.0 until a clock assumption exists — reported,
   not invented.
 - Elementwise/pool/requantize steps cost zero modeled cycles.
+- `busy_cycles` is the sim cycle count; `idle_cycles` is 0 until a stall
+  model exists. `dma_bytes` sums LOAD plus STORE sizes; `command_counts`
+  tallies opcodes in the packed stream.
 - Cycles count executed (padded) MACs; `predict` trims to the logical
   shape, so numerics match the logical reference bit-exact.
 - `reset()` closes the device (`load_model`, `benchmark`, `info`,
