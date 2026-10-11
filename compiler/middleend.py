@@ -8,7 +8,7 @@ import numpy as np
 
 from compiler.codegen import (
     TILE,
-    emit_matmul,
+    check_matmul,
     lower_bias_add,
     lower_conv2d,
     lower_max_pool,
@@ -137,18 +137,25 @@ def lower_graph(graph: Graph, specs: dict[str, TensorSpec],
                        weights=frozenset(opt_weights))
     addr = {name: slot.address for name, slot in plan.slots.items()}
     fused = fusable(order)
+    produced = {n.output for n in order}
     cmds: list[Command] = []
     for node in order:
         if node.output in fused:
             continue
         out_addr = addr[node.output]
         if node.op == "matmul":
-            cmds += emit_matmul(node, specs, addr[node.inputs[0]],
-                                addr[node.inputs[1]], out_addr)
+            for inp in node.inputs:
+                if inp not in produced:
+                    cmds.append(Command(op="LOAD", address=addr[inp],
+                                        size=_tensor_bytes(specs[inp])))
+            m, n, k, _, _, c_bytes = check_matmul(node, specs)
+            cmds += [Command(op="MATMUL", m=m, n=n, k=k),
+                     Command(op="STORE", address=out_addr, size=c_bytes)]
         elif node.op == "conv2d":
-            x, w = node.inputs[0], node.inputs[1]
-            cmds += [Command(op="LOAD", address=addr[x], size=_tensor_bytes(specs[x])),
-                     Command(op="LOAD", address=addr[w], size=_tensor_bytes(specs[w]))]
+            for inp in node.inputs:
+                if inp not in produced:
+                    cmds.append(Command(op="LOAD", address=addr[inp],
+                                        size=_tensor_bytes(specs[inp])))
             cmds += lower_conv2d(node, specs, base=out_addr)
         elif node.op == "relu":
             cmds += lower_relu(node, specs, base=out_addr)
