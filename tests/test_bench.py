@@ -1,4 +1,4 @@
-from benchmarks.bench_matmul import conv_chain_row, matmul_row
+from benchmarks.bench_matmul import conv_chain_row, matmul_row, mlp_row
 
 
 def _keys(row):
@@ -30,3 +30,14 @@ def test_conv_chain_row_reports_counters(tmp_path):
     assert row["edgenpu_cycles"] == (8 * 8 * 8 * 8 * 3 * 3) // 64
     assert "CONV2D:1" in row["command_counts"].split(";")
     assert "MAX_POOL:1" in row["command_counts"].split(";")
+
+
+def test_mlp_row_reports_counters(tmp_path):
+    row = mlp_row(str(tmp_path))
+    assert set(row) == _keys(row)
+    assert row["case"] == "mlp-64"
+    assert row["fp32_ms"] == ""
+    assert row["edgenpu_cycles"] == 2 * (64 * 64 * 64) // 64
+    assert row["busy_cycles"] == 2 * (64 * 64 * 64) // 64
+    assert row["dma_bytes"] == 3 * 4096 + 2 * 16384 + 4096
+    assert row["command_counts"] == "LOAD:3;MATMUL:2;STORE:3;REQUANTIZE:1"

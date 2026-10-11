@@ -127,6 +127,31 @@ def requantize_chain_row(tmp: str) -> dict:
     return _row("requantize-chain-64", "", int8_ms, sim_ms, stats)
 
 
+def mlp_row(tmp: str) -> dict:
+    s, scale = 64, 0.02
+    rng = np.random.default_rng(SEED + 4)
+    aq = quantize_int8(rng.standard_normal((s, s)).astype(np.float32), SCALE)
+    w1q = quantize_int8(rng.standard_normal((s, s)).astype(np.float32), SCALE)
+    w2q = quantize_int8(rng.standard_normal((s, s)).astype(np.float32), SCALE)
+    int8_ms = round(_time_ms(
+        lambda: requantize(matmul_int8(relu(matmul_int8(aq, w1q)), w2q), scale)), 3)
+    nodes = (Node(op="matmul", inputs=("a", "w1"), output="c"),
+             Node(op="relu", inputs=("c",), output="r"),
+             Node(op="matmul", inputs=("r", "w2"), output="d"),
+             Node(op="requantize", inputs=("d",), output="q"))
+    specs = {"a": TensorSpec(name="a", dtype="int8", shape=(s, s)),
+             "w1": TensorSpec(name="w1", dtype="int8", shape=(s, s)),
+             "c": TensorSpec(name="c", dtype="int32", shape=(s, s)),
+             "r": TensorSpec(name="r", dtype="int32", shape=(s, s)),
+             "w2": TensorSpec(name="w2", dtype="int8", shape=(s, s)),
+             "d": TensorSpec(name="d", dtype="int32", shape=(s, s)),
+             "q": TensorSpec(name="q", dtype="int8", shape=(s, s), scale=scale)}
+    lg = lower_graph(Graph(nodes=nodes), specs, {"w1": w1q, "w2": w2q}, {})
+    sim_ms, stats = _sim_run(os.path.join(tmp, "bench_mlp.bin"),
+                             lg.graph, lg.weights, lg.cmds, aq)
+    return _row("mlp-64", "", int8_ms, sim_ms, stats)
+
+
 def run() -> None:
     import tempfile
 
@@ -134,6 +159,7 @@ def run() -> None:
         rows = ([matmul_row(f"matmul-{s}", s, s, s, tmp) for s in SIZES]
                 + [matmul_row("matmul-odd-20x12x28", 20, 12, 28, tmp),
                    matmul_row("matmul-tiny-1x8", 1, 8, 8, tmp),
+                   mlp_row(tmp),
                    conv_chain_row(tmp), requantize_chain_row(tmp)])
     with open(OUT, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
