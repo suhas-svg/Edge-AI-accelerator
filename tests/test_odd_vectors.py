@@ -81,3 +81,52 @@ def test_odd_vectors_end_to_end(tmp_path):
         np.testing.assert_array_equal(out, expected)
         assert model.get_stats()["cycles"] == \
             (_pad8(m) * _pad8(k) * _pad8(n)) // 64, path
+
+
+def _odd_conv_vectors() -> list[str]:
+    return sorted(glob.glob(os.path.join(ODD_DIR, "conv_*.npz")))
+
+
+def _odd_pool_vectors() -> list[str]:
+    return sorted(glob.glob(os.path.join(ODD_DIR, "pool_*.npz")))
+
+
+def test_odd_conv_pool_sizes_present():
+    from tools import gen_vectors
+    assert len(_odd_conv_vectors()) == len(gen_vectors.CONV_ODD_SIZES) >= 3
+    assert len(_odd_pool_vectors()) == len(gen_vectors.POOL_ODD_SIZES) >= 3
+
+
+def test_odd_conv_vectors_end_to_end(tmp_path):
+    from python.edge_npu.reference import conv2d_int8
+    for path in _odd_conv_vectors():
+        d = np.load(path)
+        x_q, w_q, expected = d["x_q"], d["w_q"], d["expected"]
+        assert expected.shape[1:] == (x_q.shape[1] - w_q.shape[2] + 1,
+                                      x_q.shape[2] - w_q.shape[3] + 1)
+        assert conv2d_int8(x_q, w_q).tolist() == expected.tolist(), path
+        c, h, wd = x_q.shape
+        k, _, kh, _ = w_q.shape
+        oh, ow = expected.shape[1], expected.shape[2]
+        node = Node(op="conv2d", inputs=("x", "w"), output="y")
+        specs = {"x": TensorSpec(name="x", dtype="int8", shape=(c, h, wd)),
+                 "w": TensorSpec(name="w", dtype="int8",
+                                 shape=(k, c, kh, w_q.shape[3])),
+                 "y": TensorSpec(name="y", dtype="int32", shape=(k, oh, ow))}
+        lg = lower_graph(Graph(nodes=(node,)), specs, {"w": w_q}, {})
+        bin_path = os.path.join(str(tmp_path),
+                                os.path.basename(path) + ".bin")
+        write_model(bin_path, lg.graph, lg.weights, lg.cmds)
+        out = Device().load_model(bin_path).predict(x_q)
+        assert out.shape == expected.shape, path
+        np.testing.assert_array_equal(out, expected)
+
+
+def test_odd_pool_vectors_match_reference():
+    from python.edge_npu.reference import max_pool
+    for path in _odd_pool_vectors():
+        d = np.load(path)
+        base = os.path.basename(path)[:-len(".npz")]
+        _, dims, win, stride = base.split("_")
+        size, st = int(win[1:]), int(stride[1:])
+        assert max_pool(d["x"], size, st).tolist() == d["expected"].tolist(), path
