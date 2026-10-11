@@ -18,8 +18,16 @@ bytes.
 | `enpu_alloc_buffer(dev, size, buf)` | zeroed buffer; ARG on zero size or dead device, NOMEM on failure |
 | `enpu_free_buffer(buf)` | null-safe, double-free-safe, clears the struct |
 | `enpu_matmul_i8(a, b, c, m, n, k)` | raw INT8 kernel, INT32 out |
+| `enpu_relu_i32(buf, n)` | in-place max(x, 0) on INT32; ARG on null/zero |
+| `enpu_bias_add_i32(buf, bias, n)` | exact-count add; 1D broadcast stays Python-side |
+| `enpu_requantize_i32(acc, out, n, scale, zp)` | round-half-even, clamp INT8; ARG on bad scale/zp |
+| `enpu_max_pool_i32(x, y, c, h, w, size, stride)` | window max; ARG on oversized window |
+| `enpu_conv2d_i8(x, w, y, c, h, wd, k, kh, kw)` | valid stride-1, square kernel, INT32 out |
 | `enpu_cycles_for_matmul(m, n, k, cycles)` | MACs/64; ARG unless dims are tile multiples |
+| `enpu_cycles_for_conv2d(k, oh, ow, c, kh, kw, cycles)` | MACs/64; ARG unless K/C/OH/OW are tile multiples |
 | `enpu_run_matmul(dev, a, b, c, m, n, k, cycles)` | size-checked buffers + kernel + cycles in one call |
+| `enpu_run_conv2d(dev, x, w, y, c, h, wd, k, kh, kw, cycles)` | size-checked conv + cycles; ARG unless K/C/OH/OW tile-aligned |
+| `enpu_run_relu/bias_add/requantize/max_pool(...)` | size-checked elementwise/pool, zero cycles; elementwise needs numel divisible by 64 |
 | `enpu_read_cycles(cycles)` | stub 0 until the perf counter exists |
 
 Error codes: `ENPU_OK = 0`, `ENPU_ERR_ARG = -1`, `ENPU_ERR_NOMEM = -2`,
@@ -33,6 +41,9 @@ loads and validates on construction, `enpu::Buffer` frees on destruction
 and is move-only. Every method throws `enpu::Error` (a `std::runtime_error`
 carrying the `ENPU_*` code) on failure; `run_matmul` returns the cycle
 count. `reset()` tears down (use throws until `open()` runs again).
+`run_conv2d` and `cycles_for_conv2d` cover conv; `run_relu`,
+`run_bias_add`, `run_requantize`, and `run_max_pool` cover the tails and
+return the zero cycle count.
 
 ## Python SDK (`python/edge_npu/sdk.py`)
 
