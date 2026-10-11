@@ -139,23 +139,25 @@ def lower_graph(graph: Graph, specs: dict[str, TensorSpec],
     fused = fusable(order)
     produced = {n.output for n in order}
     cmds: list[Command] = []
+    # Hoist every source-input LOAD to the stream head so the whole
+    # transfer set is visible before the first compute (overlap-ready
+    # for double-buffered DMA; same bytes and counts, new order).
+    for node in order:
+        if node.output in fused or node.op not in ("matmul", "conv2d"):
+            continue
+        for inp in node.inputs:
+            if inp not in produced:
+                cmds.append(Command(op="LOAD", address=addr[inp],
+                                    size=_tensor_bytes(specs[inp])))
     for node in order:
         if node.output in fused:
             continue
         out_addr = addr[node.output]
         if node.op == "matmul":
-            for inp in node.inputs:
-                if inp not in produced:
-                    cmds.append(Command(op="LOAD", address=addr[inp],
-                                        size=_tensor_bytes(specs[inp])))
             m, n, k, _, _, c_bytes = check_matmul(node, specs)
             cmds += [Command(op="MATMUL", m=m, n=n, k=k),
                      Command(op="STORE", address=out_addr, size=c_bytes)]
         elif node.op == "conv2d":
-            for inp in node.inputs:
-                if inp not in produced:
-                    cmds.append(Command(op="LOAD", address=addr[inp],
-                                        size=_tensor_bytes(specs[inp])))
             cmds += lower_conv2d(node, specs, base=out_addr)
         elif node.op == "relu":
             cmds += lower_relu(node, specs, base=out_addr)

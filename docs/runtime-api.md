@@ -63,6 +63,10 @@ bench = device.benchmark(model, x)  # median ms
   Later computes stage source inputs from LOADs and reuse live buffers;
   cycles and MACs accumulate across computes. Anything else is a
   `ValueError`.
+- Source LOADs are hoisted to the stream head, so the whole transfer set
+  is visible before the first compute (overlap-ready for double-buffered
+  DMA). Same bytes and counts, new order; cycle-overlap credit awaits
+  the partner DMA model, so modeled cycles are unchanged.
 - `memory_bandwidth_gbs` is 0.0 until a clock assumption exists — reported,
   not invented.
 - Elementwise/pool/requantize steps cost zero modeled cycles.
