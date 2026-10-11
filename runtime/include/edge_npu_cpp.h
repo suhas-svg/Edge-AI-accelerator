@@ -44,7 +44,16 @@ public:
     Buffer alloc_buffer(size_t size);
     uint32_t run_matmul(const Buffer &a, const Buffer &b, Buffer &c,
                         int m, int n, int k);
+    uint32_t run_conv2d(const Buffer &x, const Buffer &w, Buffer &y,
+                        int c, int h, int wd, int k, int kh, int kw);
+    uint32_t run_relu(Buffer &buf, size_t n);
+    uint32_t run_bias_add(Buffer &buf, const Buffer &bias, size_t n);
+    uint32_t run_requantize(const Buffer &acc, Buffer &out, size_t n,
+                            float scale, int zero_point);
+    uint32_t run_max_pool(const Buffer &x, Buffer &y,
+                          int c, int h, int w, int size, int stride);
     uint32_t cycles_for_matmul(int m, int n, int k);
+    uint32_t cycles_for_conv2d(int k, int oh, int ow, int c, int kh, int kw);
     uint32_t read_cycles();
     class Model load_model(const std::string &path);
     const enpu_device_t *get() const noexcept { return &dev_; }

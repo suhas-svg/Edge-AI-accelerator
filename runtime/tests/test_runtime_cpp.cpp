@@ -79,6 +79,58 @@ int main(void) {
     enpu::Model m2 = dev.load_model("build/cpp_good.bin");
     assert(m2.version() == 1);
 
+    assert(dev.cycles_for_conv2d(8, 8, 8, 8, 3, 3) == 576);
+    expect_code([&] { dev.cycles_for_conv2d(7, 8, 8, 8, 3, 3); },
+                ENPU_ERR_ARG);
+
+    enpu::Buffer cx = dev.alloc_buffer(800);
+    enpu::Buffer cw = dev.alloc_buffer(576);
+    enpu::Buffer cy = dev.alloc_buffer(2048);
+    for (int i = 0; i < 800; i++)
+        ((int8_t *)cx.data())[i] = (int8_t)(i % 16 - 8);
+    for (int i = 0; i < 576; i++)
+        ((int8_t *)cw.data())[i] = (int8_t)(i % 5 - 2);
+    assert(dev.run_conv2d(cx, cw, cy, 8, 10, 10, 8, 3, 3)
+           == (uint32_t)(8 * 8 * 8 * 8 * 3 * 3 / 64));
+    {
+        int32_t expect = 0;
+        for (int cc = 0; cc < 8; cc++)
+            for (int ki = 0; ki < 3; ki++)
+                for (int kj = 0; kj < 3; kj++)
+                    expect += (int32_t)((int8_t *)cx.data())[cc * 100 + ki * 10 + kj]
+                        * ((int8_t *)cw.data())[cc * 9 + ki * 3 + kj];
+        assert(((int32_t *)cy.data())[0] == expect);
+    }
+    expect_code([&] { dev.run_conv2d(cx, cw, cy, 7, 10, 10, 8, 3, 3); },
+                ENPU_ERR_ARG);
+
+    enpu::Buffer ce = dev.alloc_buffer(256);
+    enpu::Buffer cb = dev.alloc_buffer(256);
+    enpu::Buffer cq = dev.alloc_buffer(64);
+    for (int i = 0; i < 64; i++) {
+        ((int32_t *)ce.data())[i] = (int32_t)(i % 9 - 4) * 1000;
+        ((int32_t *)cb.data())[i] = (int32_t)(i - 32);
+    }
+    assert(dev.run_relu(ce, 64) == 0);
+    assert(((int32_t *)ce.data())[0] == 0 && ((int32_t *)ce.data())[8] == 4000);
+    expect_code([&] { dev.run_relu(ce, 63); }, ENPU_ERR_ARG);
+    assert(dev.run_bias_add(ce, cb, 64) == 0);
+    assert(((int32_t *)ce.data())[8] == 4000 + (8 - 32));
+    assert(dev.run_requantize(ce, cq, 64, 0.5f, 3) == 0);
+    assert(((int8_t *)cq.data())[8] == 127);
+    assert(((int8_t *)cq.data())[0] == -13);
+    expect_code([&] { dev.run_requantize(ce, cq, 64, 0.0f, 0); },
+                ENPU_ERR_ARG);
+
+    enpu::Buffer px = dev.alloc_buffer(64);
+    enpu::Buffer py = dev.alloc_buffer(16);
+    for (int i = 0; i < 16; i++)
+        ((int32_t *)px.data())[i] = (int32_t)i;
+    assert(dev.run_max_pool(px, py, 1, 4, 4, 2, 2) == 0);
+    assert(((int32_t *)py.data())[0] == 5 && ((int32_t *)py.data())[3] == 15);
+    expect_code([&] { dev.run_max_pool(px, py, 1, 4, 4, 0, 2); },
+                ENPU_ERR_ARG);
+
     printf("runtime cpp tests ok\n");
     return 0;
 }

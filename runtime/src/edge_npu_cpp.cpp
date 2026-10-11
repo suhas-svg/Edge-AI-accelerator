@@ -68,6 +68,48 @@ uint32_t Device::cycles_for_matmul(int m, int n, int k) {
     return cycles;
 }
 
+uint32_t Device::run_conv2d(const Buffer &x, const Buffer &w, Buffer &y,
+                            int c, int h, int wd, int k, int kh, int kw) {
+    uint32_t cycles = 0;
+    throw_on_error(enpu_run_conv2d(&dev_, x.get(), w.get(), y.get(),
+                                   c, h, wd, k, kh, kw, &cycles));
+    return cycles;
+}
+
+uint32_t Device::run_relu(Buffer &buf, size_t n) {
+    uint32_t cycles = 0;
+    throw_on_error(enpu_run_relu(&dev_, buf.get(), n, &cycles));
+    return cycles;
+}
+
+uint32_t Device::run_bias_add(Buffer &buf, const Buffer &bias, size_t n) {
+    uint32_t cycles = 0;
+    throw_on_error(enpu_run_bias_add(&dev_, buf.get(), bias.get(), n, &cycles));
+    return cycles;
+}
+
+uint32_t Device::run_requantize(const Buffer &acc, Buffer &out, size_t n,
+                                float scale, int zero_point) {
+    uint32_t cycles = 0;
+    throw_on_error(enpu_run_requantize(&dev_, acc.get(), out.get(), n,
+                                       scale, zero_point, &cycles));
+    return cycles;
+}
+
+uint32_t Device::run_max_pool(const Buffer &x, Buffer &y,
+                              int c, int h, int w, int size, int stride) {
+    uint32_t cycles = 0;
+    throw_on_error(enpu_run_max_pool(&dev_, x.get(), y.get(),
+                                     c, h, w, size, stride, &cycles));
+    return cycles;
+}
+
+uint32_t Device::cycles_for_conv2d(int k, int oh, int ow, int c, int kh, int kw) {
+    uint32_t cycles = 0;
+    throw_on_error(enpu_cycles_for_conv2d(k, oh, ow, c, kh, kw, &cycles));
+    return cycles;
+}
+
 uint32_t Device::read_cycles() {
     uint32_t cycles = 0;
     throw_on_error(enpu_read_cycles(&cycles));

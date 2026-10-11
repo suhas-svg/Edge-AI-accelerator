@@ -81,6 +81,106 @@ int main(void) {
     assert(enpu_reset(&dev) == ENPU_OK);
     assert(enpu_reset(&dev) == ENPU_ERR_ARG);
 
+    assert(enpu_open(&dev) == ENPU_OK);
+    assert(enpu_relu_i32(0, 4) == ENPU_ERR_ARG);
+    assert(enpu_bias_add_i32(0, 0, 0) == ENPU_ERR_ARG);
+    assert(enpu_requantize_i32(0, 0, 0, 0.5f, 0) == ENPU_ERR_ARG);
+    assert(enpu_max_pool_i32(0, 0, 0, 0, 0, 0, 0) == ENPU_ERR_ARG);
+    assert(enpu_conv2d_i8(0, 0, 0, 0, 0, 0, 0, 0, 0) == ENPU_ERR_ARG);
+
+    enpu_buffer_t e = {0}, eb = {0}, eq = {0};
+    assert(enpu_alloc_buffer(&dev, 256, &e) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 256, &eb) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 64, &eq) == ENPU_OK);
+    for (int i = 0; i < 64; i++) {
+        ((int32_t *)e.data)[i] = (int32_t)(i % 9 - 4) * 1000;
+        ((int32_t *)eb.data)[i] = (int32_t)(i - 32);
+    }
+    assert(enpu_relu_i32((int32_t *)e.data, 0) == ENPU_ERR_ARG);
+    assert(enpu_run_relu(&dev, &e, 63, &rc) == ENPU_ERR_ARG);
+    assert(enpu_run_relu(&dev, &e, 64, &rc) == ENPU_OK && rc == 0);
+    assert(((int32_t *)e.data)[0] == 0);
+    assert(((int32_t *)e.data)[8] == 4000);
+    assert(enpu_run_bias_add(&dev, &e, &eb, 64, &rc) == ENPU_OK && rc == 0);
+    assert(((int32_t *)e.data)[8] == 4000 + (8 - 32));
+    {
+        /* rintf rounds half to even, matching NumPy: 0.5->0, 1.5->2. */
+        int32_t rq_in[4] = {1, 3, -3, 5};
+        int8_t rq_out[4] = {0};
+        assert(enpu_requantize_i32(rq_in, rq_out, 4, 0.5f, 0) == ENPU_OK);
+        assert(rq_out[0] == 0 && rq_out[1] == 2);
+        assert(rq_out[2] == -2 && rq_out[3] == 2);
+    }
+    enpu_buffer_t eb2 = {0};
+    assert(enpu_alloc_buffer(&dev, 32, &eb2) == ENPU_OK);
+    assert(enpu_run_bias_add(&dev, &e, &eb2, 64, &rc) == ENPU_ERR_ARG);
+    enpu_free_buffer(&eb2);
+    assert(enpu_requantize_i32((int32_t *)e.data, (int8_t *)eq.data, 64, 0.0f, 0)
+           == ENPU_ERR_ARG);
+    assert(enpu_requantize_i32((int32_t *)e.data, (int8_t *)eq.data, 64, 0.5f, 200)
+           == ENPU_ERR_ARG);
+    assert(enpu_run_requantize(&dev, &e, &eq, 64, 0.5f, 3, &rc) == ENPU_OK && rc == 0);
+    /* e[8] = 3976; 3976 * 0.5 = 1988; +3 = 1991 -> clamp 127 */
+    assert(((int8_t *)eq.data)[8] == 127);
+    /* e[0] = -4000 -> relu 0, + eb[0] (-32) = -32; -32 * 0.5 + 3 = -13 */
+    assert(((int8_t *)eq.data)[0] == -13);
+
+    enpu_buffer_t px = {0}, py = {0};
+    assert(enpu_alloc_buffer(&dev, 64, &px) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 16, &py) == ENPU_OK);
+    for (int i = 0; i < 16; i++)
+        ((int32_t *)px.data)[i] = (int32_t)i;
+    assert(enpu_max_pool_i32((int32_t *)px.data, (int32_t *)py.data,
+                             1, 4, 4, 0, 2) == ENPU_ERR_ARG);
+    assert(enpu_max_pool_i32((int32_t *)px.data, (int32_t *)py.data,
+                             1, 4, 4, 5, 2) == ENPU_ERR_ARG);
+    assert(enpu_run_max_pool(&dev, &px, &py, 1, 4, 4, 2, 2, &rc) == ENPU_OK
+           && rc == 0);
+    assert(((int32_t *)py.data)[0] == 5 && ((int32_t *)py.data)[1] == 7);
+    assert(((int32_t *)py.data)[2] == 13 && ((int32_t *)py.data)[3] == 15);
+
+    uint32_t cc = 0;
+    assert(enpu_cycles_for_conv2d(8, 8, 8, 8, 3, 3, &cc) == ENPU_OK && cc == 576);
+    assert(enpu_cycles_for_conv2d(7, 8, 8, 8, 3, 3, &cc) == ENPU_ERR_ARG);
+    assert(enpu_cycles_for_conv2d(8, 8, 8, 8, 3, 3, 0) == ENPU_ERR_ARG);
+    enpu_buffer_t cx = {0}, cw = {0}, cy = {0};
+    assert(enpu_alloc_buffer(&dev, 800, &cx) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 576, &cw) == ENPU_OK);
+    assert(enpu_alloc_buffer(&dev, 2048, &cy) == ENPU_OK);
+    for (int i = 0; i < 800; i++)
+        ((int8_t *)cx.data)[i] = (int8_t)(i % 16 - 8);
+    for (int i = 0; i < 576; i++)
+        ((int8_t *)cw.data)[i] = (int8_t)(i % 5 - 2);
+    ((int8_t *)cw.data)[0] = 1;
+    ((int8_t *)cw.data)[1] = 1;
+    ((int8_t *)cw.data)[8] = 1;
+    ((int8_t *)cw.data)[9] = 1;
+    assert(enpu_conv2d_i8((int8_t *)cx.data, (int8_t *)cw.data, (int32_t *)cy.data,
+                          0, 10, 10, 8, 3, 3) == ENPU_ERR_ARG);
+    assert(enpu_conv2d_i8((int8_t *)cx.data, (int8_t *)cw.data, (int32_t *)cy.data,
+                          8, 10, 10, 8, 3, 2) == ENPU_ERR_ARG);
+    assert(enpu_run_conv2d(&dev, &cx, &cw, &cy, 7, 10, 10, 8, 3, 3, &cc)
+           == ENPU_ERR_ARG);
+    assert(enpu_run_conv2d(&dev, &cx, &cw, &cy, 8, 10, 10, 8, 3, 3, &cc) == ENPU_OK
+           && cc == (uint32_t)(8 * 8 * 8 * 8 * 3 * 3 / 64));
+    {
+        int32_t expect = 0;
+        for (int cc2 = 0; cc2 < 8; cc2++)
+            for (int ki = 0; ki < 3; ki++)
+                for (int kj = 0; kj < 3; kj++)
+                    expect += (int32_t)((int8_t *)cx.data)[cc2 * 100 + ki * 10 + kj]
+                        * ((int8_t *)cw.data)[cc2 * 9 + ki * 3 + kj];
+        assert(((int32_t *)cy.data)[0] == expect);
+    }
+    enpu_free_buffer(&e);
+    enpu_free_buffer(&eb);
+    enpu_free_buffer(&eq);
+    enpu_free_buffer(&px);
+    enpu_free_buffer(&py);
+    enpu_free_buffer(&cx);
+    enpu_free_buffer(&cw);
+    enpu_free_buffer(&cy);
+
     printf("runtime tests ok\n");
     return 0;
 }
