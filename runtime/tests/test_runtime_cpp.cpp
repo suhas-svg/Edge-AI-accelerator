@@ -83,6 +83,9 @@ int main(void) {
     expect_code([&] { dev.cycles_for_conv2d(7, 8, 8, 8, 3, 3); },
                 ENPU_ERR_ARG);
 
+    /* Perf counter stub: always 0 until the FPGA counter exists. */
+    assert(dev.read_cycles() == 0);
+
     enpu::Buffer cx = dev.alloc_buffer(800);
     enpu::Buffer cw = dev.alloc_buffer(576);
     enpu::Buffer cy = dev.alloc_buffer(2048);

@@ -22,6 +22,11 @@ int main(void) {
     assert(enpu_cycles_for_matmul(7, 8, 8, &c) != 0);
     assert(enpu_cycles_for_matmul(8, 8, 8, 0) != 0);
 
+    /* Perf counter is a stub until FPGA exists: always OK + 0, ARG on null. */
+    c = 0xDEAD;
+    assert(enpu_read_cycles(&c) == ENPU_OK && c == 0);
+    assert(enpu_read_cycles(0) == ENPU_ERR_ARG);
+
     enpu_device_t dev;
     enpu_model_t m;
     assert(enpu_open(&dev) == 0);
