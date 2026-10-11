@@ -18,9 +18,7 @@ from compiler.codegen import (
 from compiler.graph import Graph, Node
 from compiler.memory import MemoryConfig, MemoryPlan, plan_memory
 from python.edge_npu.commands import Command
-from python.edge_npu.tensor import TensorSpec
-
-_DTYPE_BYTES = {"fp32": 4, "int8": 1, "int32": 4}
+from python.edge_npu.tensor import TensorSpec, dtype_itemsize
 
 
 def schedule(graph: Graph, specs: dict[str, TensorSpec]) -> list[Node]:
@@ -122,7 +120,7 @@ class LoweredGraph:
 
 
 def _tensor_bytes(spec: TensorSpec) -> int:
-    return math.prod(spec.shape) * _DTYPE_BYTES[spec.dtype]
+    return math.prod(spec.shape) * dtype_itemsize(spec.dtype)
 
 
 def lower_graph(graph: Graph, specs: dict[str, TensorSpec],
@@ -159,12 +157,19 @@ def lower_graph(graph: Graph, specs: dict[str, TensorSpec],
         elif node.op == "max_pool":
             if node.output not in attrs:
                 raise ValueError(f"pool node {node.output!r} has no attrs")
-            a = attrs[node.output]
+            try:
+                a = attrs[node.output]
+                size, stride = a["size"], a["stride"]
+            except (KeyError, TypeError):
+                raise ValueError(
+                    f"pool node {node.output!r} has bad attrs "
+                    f"{attrs.get(node.output)!r}")
             cmds += lower_max_pool(node, specs, base=out_addr,
-                                   size=a["size"], stride=a["stride"])
+                                   size=size, stride=stride)
         elif node.op == "requantize":
             cmds += lower_requantize(node, specs, base=out_addr,
-                                     scale=specs[node.output].scale)
+                                     scale=specs[node.output].scale,
+                                     zero_point=specs[node.output].zero_point)
         else:  # pragma: no cover — validate rejects these above
             raise ValueError(f"no lowering for op {node.op!r}")
     consumed = {i for n in order for i in n.inputs}
@@ -290,8 +295,13 @@ def legalize(order: list[Node], specs: dict[str, TensorSpec],
                 raise ValueError(f"{node.op} needs 1 inputs, got {len(node.inputs)}")
             if node.output not in attrs:
                 raise ValueError(f"pool node {node.output!r} has no attrs")
-            a = attrs[node.output]
-            size, stride = a["size"], a["stride"]
+            try:
+                a = attrs[node.output]
+                size, stride = a["size"], a["stride"]
+            except (KeyError, TypeError):
+                raise ValueError(
+                    f"pool node {node.output!r} has bad attrs "
+                    f"{attrs.get(node.output)!r}")
             if size <= 0 or stride <= 0:
                 raise ValueError(f"pool size={size} stride={stride} must be positive")
             x_s, y_s = specs[node.inputs[0]], specs[node.output]

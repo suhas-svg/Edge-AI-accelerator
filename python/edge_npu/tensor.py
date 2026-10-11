@@ -6,6 +6,16 @@ from typing import Literal
 DType = Literal["fp32", "int8", "int32"]
 OpKind = Literal["matmul", "relu", "bias_add", "conv2d", "max_pool", "requantize", "load", "store"]
 
+_DTYPE_BYTES = {"fp32": 4, "int8": 1, "int32": 4}
+
+
+def dtype_itemsize(dtype: str) -> int:
+    """Bytes per element. ValueError on unknown dtypes, never KeyError."""
+    try:
+        return _DTYPE_BYTES[dtype]
+    except KeyError:
+        raise ValueError(f"unknown dtype {dtype!r}")
+
 
 @dataclass(frozen=True)
 class TensorSpec:

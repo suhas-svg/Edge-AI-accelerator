@@ -5,10 +5,9 @@ import math
 
 from compiler.graph import Node
 from python.edge_npu.commands import Command
-from python.edge_npu.tensor import TensorSpec
+from python.edge_npu.tensor import TensorSpec, dtype_itemsize
 
 TILE = 8
-_DTYPE_BYTES = {"fp32": 4, "int8": 1, "int32": 4}
 
 
 def _numel(shape: tuple[int, ...]) -> int:
@@ -40,9 +39,9 @@ def check_matmul(node: Node, specs: dict[str, TensorSpec]) -> tuple[int, int, in
     for name, dim in (("m", m), ("n", n), ("k", k)):
         if dim % TILE != 0:
             raise ValueError(f"dim {name}={dim} not divisible by {TILE}")
-    a_bytes = m * k * _DTYPE_BYTES[a.dtype]
-    w_bytes = k * n * _DTYPE_BYTES[w.dtype]
-    c_bytes = m * n * _DTYPE_BYTES[c.dtype]
+    a_bytes = m * k * dtype_itemsize(a.dtype)
+    w_bytes = k * n * dtype_itemsize(w.dtype)
+    c_bytes = m * n * dtype_itemsize(c.dtype)
     return m, n, k, a_bytes, w_bytes, c_bytes
 
 
@@ -88,7 +87,7 @@ def lower_relu(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Comm
         raise ValueError(
             f"relu input shape {specs[node.inputs[0]].shape} != output {out.shape}"
         )
-    return [Command(op="RELU", address=base, size=_numel(out.shape) * _DTYPE_BYTES[out.dtype])]
+    return [Command(op="RELU", address=base, size=_numel(out.shape) * dtype_itemsize(out.dtype))]
 
 
 def lower_bias_add(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Command]:
@@ -103,7 +102,7 @@ def lower_bias_add(node: Node, specs: dict[str, TensorSpec], base: int) -> list[
             f"bias shape {bias.shape} broadcasts neither to last dim {out.shape[-1]} "
             f"nor to {out.shape}"
         )
-    return [Command(op="BIAS_ADD", address=base, size=_numel(out.shape) * _DTYPE_BYTES[out.dtype])]
+    return [Command(op="BIAS_ADD", address=base, size=_numel(out.shape) * dtype_itemsize(out.dtype))]
 
 
 def lower_conv2d(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Command]:
@@ -135,7 +134,7 @@ def lower_conv2d(node: Node, specs: dict[str, TensorSpec], base: int) -> list[Co
         if dim % TILE != 0:
             raise ValueError(f"conv dim {name}={dim} not divisible by {TILE}")
     return [Command(op="CONV2D", address=base,
-                    size=_numel(y.shape) * _DTYPE_BYTES[y.dtype], m=k, n=oh, k=ow)]
+                    size=_numel(y.shape) * dtype_itemsize(y.dtype), m=k, n=oh, k=ow)]
 
 
 def lower_max_pool(node: Node, specs: dict[str, TensorSpec], base: int,
@@ -159,7 +158,7 @@ def lower_max_pool(node: Node, specs: dict[str, TensorSpec], base: int,
     if y.shape != (c, oh, ow):
         raise ValueError(f"pool output shape {y.shape} != ({c}, {oh}, {ow})")
     return [Command(op="MAX_POOL", address=base,
-                    size=_numel(y.shape) * _DTYPE_BYTES[y.dtype], m=size, n=stride)]
+                    size=_numel(y.shape) * dtype_itemsize(y.dtype), m=size, n=stride)]
 
 
 def lower_requantize(node: Node, specs: dict[str, TensorSpec], base: int,
@@ -191,5 +190,5 @@ def lower_requantize(node: Node, specs: dict[str, TensorSpec], base: int,
         )
     (scale_bits,) = struct.unpack("<I", struct.pack("<f", scale))
     return [Command(op="REQUANTIZE", address=base,
-                    size=_numel(out.shape) * _DTYPE_BYTES[out.dtype],
+                    size=_numel(out.shape) * dtype_itemsize(out.dtype),
                     reserved=scale_bits, m=zero_point + 128)]
