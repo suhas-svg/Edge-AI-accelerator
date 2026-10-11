@@ -6,8 +6,12 @@ import numpy as np
 from python.edge_npu.reference import quantize_int8, matmul_int8
 
 SIZES = [(8, 8, 8), (8, 8, 16), (16, 8, 8), (64, 64, 64), (128, 128, 128), (256, 256, 256)]
+# Odd dims never reach hardware unpadded; these are software-side only and
+# live in a separate directory so the RTL harness glob never sees them.
+ODD_SIZES = [(20, 12, 28), (1, 8, 8), (60, 64, 64)]
 SCALE = 0.05
 OUT = os.path.join(os.path.dirname(__file__), "..", "tests", "vectors")
+ODD_OUT = os.path.join(os.path.dirname(__file__), "..", "tests", "vectors_odd")
 
 
 def _write(path: str, a_q: np.ndarray, b_q: np.ndarray, expected: np.ndarray) -> None:
@@ -28,6 +32,14 @@ def main() -> None:
     ov_a = np.full((64, 64), -128, dtype=np.int8)
     ov_b = np.full((64, 64), 127, dtype=np.int8)
     _write(os.path.join(OUT, "matmul_overflow.npz"), ov_a, ov_b, matmul_int8(ov_a, ov_b))
+    os.makedirs(ODD_OUT, exist_ok=True)
+    orng = np.random.default_rng(11)
+    for m, k, n in ODD_SIZES:
+        a = orng.standard_normal((m, k)).astype(np.float32)
+        b = orng.standard_normal((k, n)).astype(np.float32)
+        aq, bq = quantize_int8(a, SCALE), quantize_int8(b, SCALE)
+        expected = matmul_int8(aq, bq)
+        _write(os.path.join(ODD_OUT, f"matmul_{m}x{k}x{n}.npz"), aq, bq, expected)
 
 
 if __name__ == "__main__":

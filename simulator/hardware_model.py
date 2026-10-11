@@ -32,7 +32,12 @@ def mac_array_matmul(a_q: np.ndarray, b_q: np.ndarray) -> np.ndarray:
             for p0 in range(0, k, MAC_ARRAY):
                 a_tile = a32[i0:i0 + MAC_ARRAY, p0:p0 + MAC_ARRAY]
                 b_tile = b32[p0:p0 + MAC_ARRAY, j0:j0 + MAC_ARRAY]
-                acc += a_tile @ b_tile
+                # Ragged edge tiles zero-pad to the 8x8 MAC grid, like hardware.
+                a_pad = np.zeros((MAC_ARRAY, MAC_ARRAY), dtype=np.int32)
+                a_pad[:a_tile.shape[0], :a_tile.shape[1]] = a_tile
+                b_pad = np.zeros((MAC_ARRAY, MAC_ARRAY), dtype=np.int32)
+                b_pad[:b_tile.shape[0], :b_tile.shape[1]] = b_tile
+                acc += a_pad @ b_pad
             rows = min(MAC_ARRAY, m - i0)
             cols = min(MAC_ARRAY, n - j0)
             out[i0:i0 + rows, j0:j0 + cols] = acc[:rows, :cols]
