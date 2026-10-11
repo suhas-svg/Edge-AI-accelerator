@@ -18,9 +18,9 @@ INT8 Graph + weights + specs
   │                           fuse relu/bias into the producer step,
   │                           validate, memory plan (ping/pong banks),
   │                           then lower to the command stream
+  │  compiler/binary.py — pack model.bin (format v0.1)
   ▼
 model.bin
-  │  compiler/binary.py — pack model.bin (format v0.1)
   │  python/edge_npu/sdk.py — load, chain execution, stats
   │  simulator/hardware_model.py — numerics + cycle model
   ▼

@@ -5,9 +5,7 @@ import math
 from dataclasses import dataclass, field
 
 from compiler.graph import Node
-from python.edge_npu.tensor import TensorSpec
-
-_DTYPE_BYTES = {"fp32": 4, "int8": 1, "int32": 4}
+from python.edge_npu.tensor import TensorSpec, dtype_itemsize
 
 
 @dataclass(frozen=True)
@@ -53,7 +51,7 @@ def _align_down(v: int, align: int) -> int:
 
 
 def _byte_size(spec: TensorSpec) -> int:
-    return math.prod(spec.shape) * _DTYPE_BYTES[spec.dtype]
+    return math.prod(spec.shape) * dtype_itemsize(spec.dtype)
 
 
 def _resolve_root(name: str, aliases: dict[str, str]) -> str:

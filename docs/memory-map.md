@@ -39,6 +39,7 @@ Allocation is first-fit over freed blocks in ascending address order;
 spans round up to the alignment (default 64) while `Slot.size` keeps the
 logical bytes. Exceeding the budget raises
 `ValueError("memory plan needs {peak} bytes, budget {size}")`.
+Peak uses logical byte sizes; spans only affect packing.
 
 With `banks=2`, named weights allocate top-down from the region end while
 everything else allocates bottom-up with first-fit inside its bank, so
