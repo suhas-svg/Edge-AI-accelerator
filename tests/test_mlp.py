@@ -33,8 +33,8 @@ def test_second_matmul_loads_only_sources():
     w1 = rng.integers(-128, 127, size=(8, 8), dtype=np.int8)
     w2 = rng.integers(-128, 127, size=(8, 8), dtype=np.int8)
     lg = lower_graph(Graph(nodes=nodes), specs, {"w1": w1, "w2": w2}, {})
-    assert [c.op for c in lg.cmds] == ["LOAD", "LOAD", "MATMUL", "STORE",
-                                       "LOAD", "MATMUL", "STORE",
+    assert [c.op for c in lg.cmds] == ["LOAD", "LOAD", "LOAD", "MATMUL", "STORE",
+                                       "MATMUL", "STORE",
                                        "REQUANTIZE", "STORE"]
     assert [c.size for c in lg.cmds if c.op == "LOAD"] == [64, 64, 64]
     mms = [(c.m, c.n, c.k) for c in lg.cmds if c.op == "MATMUL"]
