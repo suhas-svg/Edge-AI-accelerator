@@ -56,6 +56,18 @@ stats = model.get_stats()   # cycles, mac_utilization, memory_bandwidth_gbs,
 bench = device.benchmark(model, x)  # median ms
 ```
 
+```bash
+.venv/Scripts/python.exe -m python.edge_npu.cli predict model.bin in.npy --out out.npy
+.venv/Scripts/python.exe -m python.edge_npu.cli benchmark model.bin in.npy --repeats 5
+.venv/Scripts/python.exe -m python.edge_npu.cli dashboard [--results benchmarks/results.csv]
+.venv/Scripts/python.exe -m python.edge_npu.cli info
+```
+
+`predict` takes `.npy`, or `.npz` (key `x`, else the first array).
+`-v` switches logging from WARNING to INFO; the SDK logs through the
+`edge_npu` logger (`load_model`/`benchmark` at INFO, `predict` at
+DEBUG).
+
 - `load_model` parses with `read_model`; corrupt files raise `ValueError`.
 - `predict(x)` executes chains starting with `matmul` or `conv2d`,
   followed by `relu`/`bias_add`/`max_pool`/`requantize`/`matmul`/`conv2d`,
