@@ -49,15 +49,21 @@ def test_load_corrupt_file_raises(tmp_path):
         Device().load_model(path)
 
 
-def test_multi_matmul_rejected(tmp_path):
+def test_multi_matmul_missing_load_rejected(tmp_path):
     graph = Graph(nodes=(Node(op="matmul", inputs=("a", "w"), output="c"),
                          Node(op="matmul", inputs=("c", "w2"), output="y"),))
     w = np.ones((8, 8), dtype=np.int8)
-    cmds = [Command(op="MATMUL", m=8, n=8, k=8)]
+    cmds = [Command(op="LOAD", address=0x1000, size=64),
+            Command(op="LOAD", address=0x1040, size=64),
+            Command(op="MATMUL", m=8, n=8, k=8),
+            Command(op="STORE", address=0x1080, size=256),
+            Command(op="MATMUL", m=8, n=8, k=8),
+            Command(op="STORE", address=0x2000, size=256)]
     path = str(tmp_path / "two.bin")
     write_model(path, graph, {"w": w, "w2": w}, cmds)
+    model = Device().load_model(path)
     with pytest.raises(ValueError):
-        Device().load_model(path)
+        model.predict(np.ones((8, 8), dtype=np.int8))
 
 
 def _chain_model(path):

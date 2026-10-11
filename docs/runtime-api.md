@@ -58,9 +58,11 @@ bench = device.benchmark(model, x)  # median ms
 
 - `load_model` parses with `read_model`; corrupt files raise `ValueError`.
 - `predict(x)` executes chains starting with `matmul` or `conv2d`,
-  followed by `relu`/`bias_add`/`max_pool`/`requantize`, with wiring
-  checked at load and every command's shape/size checked at run.
-  Anything else is a `ValueError`.
+  followed by `relu`/`bias_add`/`max_pool`/`requantize`/`matmul`/`conv2d`,
+  with wiring checked at load and every command's shape/size checked at run.
+  Later computes stage source inputs from LOADs and reuse live buffers;
+  cycles and MACs accumulate across computes. Anything else is a
+  `ValueError`.
 - `memory_bandwidth_gbs` is 0.0 until a clock assumption exists — reported,
   not invented.
 - Elementwise/pool/requantize steps cost zero modeled cycles.
