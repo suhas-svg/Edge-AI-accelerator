@@ -1,6 +1,7 @@
 """Developer SDK (spec section 20). Backed by the simulator until FPGA exists."""
 from __future__ import annotations
 
+import logging
 import struct
 import time
 
@@ -10,6 +11,8 @@ from compiler.binary import ModelPack, read_model
 from compiler.middleend import fusable
 from python.edge_npu.reference import bias_add, max_pool, relu, requantize
 from simulator.hardware_model import MACS_PER_CYCLE, run_conv2d, run_matmul
+
+log = logging.getLogger("edge_npu")
 
 
 def _pad_to(shape: tuple[int, ...], arr: np.ndarray) -> np.ndarray:
@@ -31,7 +34,9 @@ class Model:
         try:
             self.pack: ModelPack = read_model(path)
         except (ValueError, OSError) as e:
-            raise ValueError(f"cannot load model {path!r}: {e}")
+            raise ValueError(f"cannot load model {path!r}: {e}") from e
+        log.info("load_model %s: %d nodes, %d commands",
+                 path, len(self.pack.graph.nodes), len(self.pack.cmds))
         self._chain = self._validate_chain(list(self.pack.graph.nodes))
         self._cycles = 0
         self._macs = 0
@@ -246,6 +251,8 @@ class Model:
         buf = buf[tuple(slice(0, d) for d in logical)]
         self._cycles = cycles
         self._macs = macs
+        log.debug("predict %s: in %s -> out %s, cycles=%d",
+                  self.path, x.shape, buf.shape, cycles)
         return buf
 
     def get_stats(self) -> dict:
@@ -292,4 +299,7 @@ class Device:
             t = time.perf_counter()
             model.predict(x)
             samples.append((time.perf_counter() - t) * 1000)
-        return {"median_ms": float(np.median(samples)), "repeats": repeats}
+        median_ms = float(np.median(samples))
+        log.info("benchmark %s: median_ms=%.3f repeats=%d",
+                 model.path, median_ms, repeats)
+        return {"median_ms": median_ms, "repeats": repeats}
