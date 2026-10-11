@@ -3,12 +3,14 @@ from __future__ import annotations
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
-from python.edge_npu.reference import quantize_int8, matmul_int8
+from python.edge_npu.reference import quantize_int8, matmul_int8, conv2d_int8, max_pool
 
 SIZES = [(8, 8, 8), (8, 8, 16), (16, 8, 8), (64, 64, 64), (128, 128, 128), (256, 256, 256)]
 # Odd dims never reach hardware unpadded; these are software-side only and
 # live in a separate directory so the RTL harness glob never sees them.
 ODD_SIZES = [(20, 12, 28), (1, 8, 8), (60, 64, 64)]
+CONV_ODD_SIZES = [(4, 9, 9, 8, 3), (8, 15, 15, 8, 3), (3, 10, 12, 8, 2)]
+POOL_ODD_SIZES = [(8, 7, 7, 2, 2), (4, 9, 9, 3, 1), (5, 9, 9, 2, 2)]
 SCALE = 0.05
 OUT = os.path.join(os.path.dirname(__file__), "..", "tests", "vectors")
 ODD_OUT = os.path.join(os.path.dirname(__file__), "..", "tests", "vectors_odd")
@@ -40,6 +42,20 @@ def main() -> None:
         aq, bq = quantize_int8(a, SCALE), quantize_int8(b, SCALE)
         expected = matmul_int8(aq, bq)
         _write(os.path.join(ODD_OUT, f"matmul_{m}x{k}x{n}.npz"), aq, bq, expected)
+    for c, h, wd, k, kh in CONV_ODD_SIZES:
+        x = orng.standard_normal((c, h, wd)).astype(np.float32)
+        w = orng.standard_normal((k, c, kh, kh)).astype(np.float32)
+        xq, wq = quantize_int8(x, SCALE), quantize_int8(w, SCALE)
+        expected = conv2d_int8(xq, wq)
+        path = os.path.join(ODD_OUT, f"conv_{c}x{h}x{wd}_{k}x{c}x{kh}x{kh}.npz")
+        np.savez(path, x_q=xq, w_q=wq, expected=expected)
+        print(f"wrote {path}")
+    for c, h, wd, win, st in POOL_ODD_SIZES:
+        x = orng.integers(-10000, 10000, size=(c, h, wd)).astype(np.int32)
+        expected = max_pool(x, win, st)
+        path = os.path.join(ODD_OUT, f"pool_{c}x{h}x{wd}_k{win}_s{st}.npz")
+        np.savez(path, x=x, expected=expected)
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":
