@@ -34,7 +34,7 @@ simulator, useful only as a rough cost comparison against the CPU columns.
 
 | Column | Meaning |
 |---|---|
-| `case` | workload label (`matmul-<m>x<k>x<n>`, `conv-chain-8ch`, `requantize-chain-64`) |
+| `case` | workload label (`matmul-<m>x<k>x<n>`, `mlp-64`, `conv-chain-8ch`, `requantize-chain-64`) |
 | `fp32_ms` | CPU FP32 reference, blank where no FP32 reference exists for that op |
 | `int8_ms` | CPU INT8 reference for the whole row |
 | `edgenpu_sim_ms` | full compile→pack→load→infer path through the SDK |
