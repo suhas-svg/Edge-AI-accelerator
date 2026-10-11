@@ -7,6 +7,7 @@ How the numbers in `benchmarks/results.csv` are produced and what they mean.
 ```bash
 bash scripts/setup.sh   # once; idempotent
 .venv/Scripts/python.exe benchmarks/bench_matmul.py
+.venv/Scripts/python.exe benchmarks/dashboard.py   # text table over results.csv
 ```
 
 The script rewrites `benchmarks/results.csv` and prints the rows. Commit the
