@@ -47,6 +47,31 @@ def _median_ms(fn, *args) -> float:
     return float(np.median(samples))
 
 
+def render_dashboard(cpu_ms: float, sim_ms: float, stats: dict,
+                     qerr: float, diff: int) -> str:
+    """Dashboard text. ASCII borders only: stock Windows consoles are
+    cp1252/cp437, where the old box-drawing glyphs raised
+    UnicodeEncodeError on print."""
+    bar = "+" + "=" * 38 + "+"
+    pad = "| Model:        DemoMatmul 64x64       |"
+    return "\n".join([
+        bar,
+        "|           EdgeNPU Dashboard          |",
+        bar,
+        pad,
+        "| Precision:    INT8                   |",
+        "|                                      |",
+        f"| CPU INT8:     {cpu_ms:>8.3f} ms           |",
+        f"| EdgeNPU-sim:  {sim_ms:>8.3f} ms           |",
+        "|                                      |",
+        f"| Sim cycles:   {stats['cycles']:<10d}         |",
+        f"| MAC util:     {stats['mac_utilization'] * 100:>7.1f} %           |",
+        f"| Quant err:    {qerr:>8.4f}               |",
+        f"| Correctness:  max diff {diff} (exact)      |",
+        bar,
+    ])
+
+
 def main() -> None:
     rng = np.random.default_rng(SEED)
     a = rng.standard_normal((SIZE, SIZE)).astype(np.float32)
@@ -77,20 +102,7 @@ def main() -> None:
     diff = int(np.max(np.abs(out.astype(np.int64) - ref.astype(np.int64))))
     assert diff == 0, f"sim diverged from reference by {diff}"
 
-    print("╔══════════════════════════════════════╗")
-    print("║           EdgeNPU Dashboard          ║")
-    print("╠══════════════════════════════════════╣")
-    print("║ Model:        DemoMatmul 64x64       ║")
-    print("║ Precision:    INT8                   ║")
-    print("║                                      ║")
-    print(f"║ CPU INT8:     {cpu_ms:>8.3f} ms           ║")
-    print(f"║ EdgeNPU-sim:  {sim['median_ms']:>8.3f} ms           ║")
-    print("║                                      ║")
-    print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
-    print(f"║ MAC util:     {stats['mac_utilization'] * 100:>7.1f} %           ║")
-    print(f"║ Quant err:    {qerr:>8.4f}               ║")
-    print(f"║ Correctness:  max diff {diff} (exact)      ║")
-    print("╚══════════════════════════════════════╝")
+    print(render_dashboard(cpu_ms, sim['median_ms'], stats, qerr, diff))
 
     _demo_chain(rng)
     _demo_tinycnn()
@@ -128,14 +140,14 @@ def _demo_chain(rng: np.random.Generator) -> None:
     assert diff == 0, f"chain diverged from reference by {diff}"
 
     print()
-    print("╔══════════════════════════════════════╗")
-    print("║      EdgeNPU Chain (v0.2+v0.4)       ║")
-    print("╠══════════════════════════════════════╣")
-    print("║ matmul→relu→bias→requant, 64x64      ║")
-    print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
-    print(f"║ Out dtype:    {str(out.dtype):<10}           ║")
-    print(f"║ Correctness:  max diff {diff} (exact)      ║")
-    print("╚══════════════════════════════════════╝")
+    print("+======================================+")
+    print("|      EdgeNPU Chain (v0.2+v0.4)       |")
+    print("+======================================+")
+    print("| matmul->relu->bias->requant, 64x64   |")
+    print(f"| Sim cycles:   {stats['cycles']:<10d}         |")
+    print(f"| Out dtype:    {str(out.dtype):<10}           |")
+    print(f"| Correctness:  max diff {diff} (exact)      |")
+    print("+======================================+")
 
 
 def _demo_tinycnn() -> None:
@@ -166,13 +178,13 @@ def _demo_tinycnn() -> None:
     assert diff == 0, f"tinycnn diverged from reference by {diff}"
 
     print()
-    print("╔══════════════════════════════════════╗")
-    print("║        EdgeNPU TinyCNN (v0.3)        ║")
-    print("╠══════════════════════════════════════╣")
-    print("║ conv → relu → max_pool, 8ch 10x10    ║")
-    print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
-    print(f"║ Correctness:  max diff {diff} (exact)      ║")
-    print("╚══════════════════════════════════════╝")
+    print("+======================================+")
+    print("|        EdgeNPU TinyCNN (v0.3)        |")
+    print("+======================================+")
+    print("| conv -> relu -> max_pool, 8ch 10x10  |")
+    print(f"| Sim cycles:   {stats['cycles']:<10d}         |")
+    print(f"| Correctness:  max diff {diff} (exact)      |")
+    print("+======================================+")
 
 
 def _demo_onnx_pipeline() -> None:
@@ -214,15 +226,15 @@ def _demo_onnx_pipeline() -> None:
     )
 
     print()
-    print("╔══════════════════════════════════════╗")
-    print("║       EdgeNPU ONNX Pipeline        ║")
-    print("╠══════════════════════════════════════╣")
-    print("║ onnx→parse→quant→lower→pack→run      ║")
-    print(f"║ w scale:      {wscales['w']:>8.5f}             ║")
-    print(f"║ Sim cycles:   {stats['cycles']:<10d}         ║")
-    print(f"║ Quant err:    {qerr:>8.4f}               ║")
-    print(f"║ Correctness:  max diff {diff} (exact)      ║")
-    print("╚══════════════════════════════════════╝")
+    print("+======================================+")
+    print("|       EdgeNPU ONNX Pipeline        |")
+    print("+======================================+")
+    print("| onnx->parse->quant->lower->pack->run |")
+    print(f"| w scale:      {wscales['w']:>8.5f}             |")
+    print(f"| Sim cycles:   {stats['cycles']:<10d}         |")
+    print(f"| Quant err:    {qerr:>8.4f}               |")
+    print(f"| Correctness:  max diff {diff} (exact)      |")
+    print("+======================================+")
 
 
 if __name__ == "__main__":
