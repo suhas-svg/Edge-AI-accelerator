@@ -1,0 +1,41 @@
+name: check
+
+# The whole software gate, on every push and PR. Mirrors the local
+# playbook: setup, then bash scripts/check.sh (pytest, C harnesses,
+# RTL-harness selfcheck, demo). The full benchmark stays out — it takes
+# minutes, not seconds — same as locally.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  software:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MinGW
+        run: choco install mingw -y
+
+      - name: Venv and Python deps
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install numpy onnx pytest
+
+      - name: Prove gcc resolves
+        shell: bash
+        run: |
+          command -v gcc
+          command -v g++
+          gcc --version | head -n 1
+
+      - name: Run scripts/check.sh
+        shell: bash
+        run: |
+          unset PYTHONPATH
+          bash scripts/check.sh
